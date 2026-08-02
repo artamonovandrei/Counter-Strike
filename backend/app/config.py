@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # repo_root/backend/app/config.py -> repo_root
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -104,6 +104,9 @@ class MoveConfig:
     walk_speed: float = 5.2
     sprint_speed: float = 7.2
     crouch_speed: float = 2.6
+    # Aiming down sights slows you down. This lives in the *shared* movement config
+    # rather than in the weapon table because prediction has to reproduce it exactly.
+    ads_speed: float = 2.9
     ground_accel: float = 70.0
     air_accel: float = 14.0
     air_cap: float = 1.2  # ceiling on wishspeed while airborne = limited air control
@@ -127,12 +130,14 @@ MOVE = MoveConfig()
 @dataclass(frozen=True)
 class WeaponDef:
     id: str
-    slot: int
+    slot: int  # 1 = primary, 2 = secondary, 3 = melee
+    category: str  # "primary" | "secondary" | "melee"
     name: str
     mag_size: int
     reserve_max: int
     rpm: float
     auto: bool
+    pellets: int  # >1 for shotguns
     damage: float
     headshot_mult: float
     armor_pen: float  # fraction of damage that bypasses armour
@@ -151,6 +156,11 @@ class WeaponDef:
     recoil_pitch: float
     recoil_yaw: float
     switch_time: float
+    # Aim-down-sights. ads_fov <= 0 means the weapon cannot be scoped at all.
+    ads_fov: float
+    ads_spread_mult: float
+    ads_time: float  # seconds to raise/lower the sights
+    scope: bool = False  # true = full scope overlay (sniper), false = simple zoom
     melee: bool = False
 
     @property
@@ -159,14 +169,17 @@ class WeaponDef:
 
 
 WEAPONS: Dict[str, WeaponDef] = {
+    # ── primaries ─────────────────────────────────────────────────────────────
     "rifle": WeaponDef(
         id="rifle",
         slot=1,
+        category="primary",
         name="MR-9 Rifle",
         mag_size=30,
         reserve_max=90,
         rpm=600.0,
         auto=True,
+        pellets=1,
         damage=33.0,
         headshot_mult=4.0,
         armor_pen=0.75,
@@ -184,15 +197,117 @@ WEAPONS: Dict[str, WeaponDef] = {
         recoil_pitch=0.55,
         recoil_yaw=0.22,
         switch_time=0.55,
+        ads_fov=55.0,
+        ads_spread_mult=0.45,
+        ads_time=0.22,
     ),
+    "smg": WeaponDef(
+        id="smg",
+        slot=1,
+        category="primary",
+        name="VP-7 SMG",
+        mag_size=30,
+        reserve_max=120,
+        rpm=850.0,
+        auto=True,
+        pellets=1,
+        damage=24.0,
+        headshot_mult=3.0,
+        armor_pen=0.50,
+        range=120.0,
+        falloff_start=10.0,
+        falloff_end=40.0,
+        falloff_min=0.40,
+        reload_time=2.0,
+        # The SMG's identity: it stays accurate while moving, and falls apart at range.
+        spread_base=0.55,
+        spread_move=1.10,
+        spread_air=5.00,
+        spread_per_shot=0.30,
+        spread_max=4.20,
+        spread_decay=13.0,
+        recoil_pitch=0.34,
+        recoil_yaw=0.26,
+        switch_time=0.45,
+        ads_fov=60.0,
+        ads_spread_mult=0.60,
+        ads_time=0.18,
+    ),
+    "sniper": WeaponDef(
+        id="sniper",
+        slot=1,
+        category="primary",
+        name="LR-40 Bolt",
+        mag_size=5,
+        reserve_max=25,
+        rpm=41.0,  # ~1.46 s between shots: the bolt cycle is the balance lever
+        auto=False,
+        pellets=1,
+        damage=118.0,  # lethal to an unarmoured torso, not to an armoured one
+        headshot_mult=2.0,
+        armor_pen=0.85,
+        range=300.0,
+        falloff_start=200.0,
+        falloff_end=300.0,
+        falloff_min=0.90,
+        reload_time=3.6,
+        # Unscoped it is nearly unusable; scoped and still, it is a laser.
+        spread_base=9.00,
+        spread_move=6.00,
+        spread_air=12.00,
+        spread_per_shot=2.00,
+        spread_max=14.00,
+        spread_decay=7.0,
+        recoil_pitch=2.10,
+        recoil_yaw=0.15,
+        switch_time=1.00,
+        ads_fov=20.0,
+        ads_spread_mult=0.012,
+        ads_time=0.35,
+        scope=True,
+    ),
+    "shotgun": WeaponDef(
+        id="shotgun",
+        slot=1,
+        category="primary",
+        name="TS-12 Shotgun",
+        mag_size=8,
+        reserve_max=32,
+        rpm=85.0,  # pump action
+        auto=False,
+        pellets=9,
+        damage=23.0,  # per pellet; all nine on target is lethal
+        headshot_mult=1.5,
+        armor_pen=0.60,
+        range=60.0,
+        falloff_start=5.0,
+        falloff_end=22.0,
+        falloff_min=0.15,
+        reload_time=3.0,
+        spread_base=3.20,
+        spread_move=2.60,
+        spread_air=5.00,
+        spread_per_shot=0.60,
+        spread_max=6.00,
+        spread_decay=10.0,
+        recoil_pitch=1.60,
+        recoil_yaw=0.35,
+        switch_time=0.65,
+        ads_fov=65.0,
+        ads_spread_mult=0.75,
+        ads_time=0.25,
+    ),
+    # ── secondary ─────────────────────────────────────────────────────────────
     "pistol": WeaponDef(
         id="pistol",
         slot=2,
+        category="secondary",
         name="SD-11 Pistol",
         mag_size=12,
         reserve_max=60,
         rpm=400.0,
         auto=False,
+        pellets=1,
         damage=26.0,
         headshot_mult=4.0,
         armor_pen=0.55,
@@ -210,15 +325,21 @@ WEAPONS: Dict[str, WeaponDef] = {
         recoil_pitch=0.75,
         recoil_yaw=0.30,
         switch_time=0.35,
+        ads_fov=60.0,
+        ads_spread_mult=0.55,
+        ads_time=0.18,
     ),
+    # ── melee ─────────────────────────────────────────────────────────────────
     "knife": WeaponDef(
         id="knife",
         slot=3,
+        category="melee",
         name="Field Knife",
         mag_size=0,
         reserve_max=0,
         rpm=130.0,
         auto=False,
+        pellets=1,
         damage=55.0,
         headshot_mult=1.6,
         armor_pen=0.90,
@@ -236,15 +357,28 @@ WEAPONS: Dict[str, WeaponDef] = {
         recoil_pitch=0.0,
         recoil_yaw=0.0,
         switch_time=0.25,
+        ads_fov=0.0,
+        ads_spread_mult=1.0,
+        ads_time=0.0,
         melee=True,
     ),
 }
 
-SLOT_TO_WEAPON: Dict[int, str] = {w.slot: w.id for w in WEAPONS.values()}
-DEFAULT_LOADOUT: List[str] = ["rifle", "pistol", "knife"]
+PRIMARY_WEAPONS: List[str] = ["rifle", "smg", "sniper", "shotgun"]
+SECONDARY_WEAPON = "pistol"
+MELEE_WEAPON = "knife"
+DEFAULT_PRIMARY = "rifle"
 
-# Simplified vertical recoil pattern for the rifle, sampled per shot index. Values are
-# multipliers on WeaponDef.recoil_pitch: climbs fast, then plateaus and drifts sideways.
+
+def make_loadout(primary: Optional[str]) -> List[str]:
+    """Build a three-slot loadout, falling back to the rifle for anything unrecognised."""
+    if primary not in PRIMARY_WEAPONS:
+        primary = DEFAULT_PRIMARY
+    return [primary, SECONDARY_WEAPON, MELEE_WEAPON]
+
+
+# Simplified vertical recoil pattern for automatic weapons, sampled per shot index. Values
+# multiply WeaponDef.recoil_pitch: climbs fast, then plateaus and drifts sideways.
 RIFLE_PATTERN: List[float] = [
     0.35, 0.55, 0.80, 1.00, 1.15, 1.25, 1.30, 1.30, 1.25, 1.20,
     1.10, 1.05, 1.00, 0.95, 0.92, 0.90, 0.88, 0.86, 0.85, 0.85,
@@ -254,6 +388,16 @@ RIFLE_YAW_PATTERN: List[float] = [
     0.0, 0.1, -0.2, 0.35, -0.45, 0.6, -0.75, 0.85, -0.9, 1.0,
     -0.85, 0.7, -0.55, 0.4, -0.3, 0.25, -0.2, 0.15, -0.1, 0.1,
 ]
+# The SMG climbs less but wanders more, so it is controllable up close and useless far away.
+SMG_YAW_PATTERN: List[float] = [
+    0.0, -0.2, 0.35, -0.5, 0.65, -0.8, 0.9, -1.0, 0.95, -0.85,
+    0.75, -0.65, 0.55, -0.45, 0.4, -0.35, 0.3, -0.25, 0.2, -0.15,
+]
+
+PATTERNS: Dict[str, tuple] = {
+    "rifle": (RIFLE_PATTERN, RIFLE_YAW_PATTERN),
+    "smg": (RIFLE_PATTERN, SMG_YAW_PATTERN),
+}
 
 BURST_RESET_TIME = 0.35  # seconds without firing before the pattern resets
 
@@ -311,6 +455,24 @@ BOT_TUNING: Dict[str, BotTuning] = {
     ),
 }
 
+# How often bots pick each primary. Snipers are rare on purpose: a team of four bots all
+# holding angles with a one-shot weapon is miserable to play against.
+BOT_PRIMARY_WEIGHTS: Dict[str, float] = {
+    "rifle": 0.45,
+    "smg": 0.28,
+    "shotgun": 0.17,
+    "sniper": 0.10,
+}
+
+# A bot's preferred engagement distance depends on what it is holding far more than on its
+# difficulty; these multiply BotTuning.preferred_range.
+BOT_RANGE_BY_WEAPON: Dict[str, float] = {
+    "rifle": 1.0,
+    "smg": 0.62,
+    "shotgun": 0.32,
+    "sniper": 2.1,
+}
+
 BOT_NAMES: List[str] = [
     "Ash", "Bishop", "Cinder", "Dagger", "Echo", "Flint", "Ghost", "Halo",
     "Iris", "Jackal", "Koda", "Lynx", "Mako", "Nomad", "Onyx", "Pike",
@@ -335,6 +497,7 @@ def client_config(settings: Optional[Settings] = None) -> dict:
         "walkSpeed": MOVE.walk_speed,
         "sprintSpeed": MOVE.sprint_speed,
         "crouchSpeed": MOVE.crouch_speed,
+        "adsSpeed": MOVE.ads_speed,
         "groundAccel": MOVE.ground_accel,
         "airAccel": MOVE.air_accel,
         "airCap": MOVE.air_cap,
@@ -349,36 +512,42 @@ def client_config(settings: Optional[Settings] = None) -> dict:
     }
 
 
+def weapon_to_client(w: WeaponDef) -> dict:
+    return {
+        "id": w.id,
+        "slot": w.slot,
+        "category": w.category,
+        "name": w.name,
+        "magSize": w.mag_size,
+        "reserveMax": w.reserve_max,
+        "rpm": w.rpm,
+        "auto": w.auto,
+        "pellets": w.pellets,
+        "damage": w.damage,
+        "headshotMult": w.headshot_mult,
+        "range": w.range,
+        "reloadTime": w.reload_time,
+        "spreadBase": w.spread_base,
+        "spreadMove": w.spread_move,
+        "spreadAir": w.spread_air,
+        "spreadPerShot": w.spread_per_shot,
+        "spreadMax": w.spread_max,
+        "spreadDecay": w.spread_decay,
+        "recoilPitch": w.recoil_pitch,
+        "recoilYaw": w.recoil_yaw,
+        "switchTime": w.switch_time,
+        "adsFov": w.ads_fov,
+        "adsSpreadMult": w.ads_spread_mult,
+        "adsTime": w.ads_time,
+        "scope": w.scope,
+        "melee": w.melee,
+    }
+
+
 def client_weapons() -> List[dict]:
-    out = []
-    for wid in DEFAULT_LOADOUT:
-        w = WEAPONS[wid]
-        out.append(
-            {
-                "id": w.id,
-                "slot": w.slot,
-                "name": w.name,
-                "magSize": w.mag_size,
-                "reserveMax": w.reserve_max,
-                "rpm": w.rpm,
-                "auto": w.auto,
-                "damage": w.damage,
-                "headshotMult": w.headshot_mult,
-                "range": w.range,
-                "reloadTime": w.reload_time,
-                "spreadBase": w.spread_base,
-                "spreadMove": w.spread_move,
-                "spreadAir": w.spread_air,
-                "spreadPerShot": w.spread_per_shot,
-                "spreadMax": w.spread_max,
-                "spreadDecay": w.spread_decay,
-                "recoilPitch": w.recoil_pitch,
-                "recoilYaw": w.recoil_yaw,
-                "switchTime": w.switch_time,
-                "melee": w.melee,
-            }
-        )
-    return out
+    """Every weapon in the game — the client needs the full table to render any player."""
+    return [weapon_to_client(WEAPONS[wid]) for wid in
+            PRIMARY_WEAPONS + [SECONDARY_WEAPON, MELEE_WEAPON]]
 
 
 DEG = math.pi / 180.0

@@ -19,9 +19,9 @@ import random
 from enum import Enum
 from typing import List, Optional, Sequence, Tuple
 
-from ..config import BotTuning, DEG, MOVE, WEAPONS
+from ..config import BOT_RANGE_BY_WEAPON, BotTuning, DEG, MOVE, WEAPONS
 from ..protocol import (
-    InputCmd, K_BACK, K_FIRE, K_FORWARD, K_JUMP, K_LEFT, K_RELOAD, K_RIGHT, K_SPRINT,
+    InputCmd, K_ADS, K_BACK, K_FIRE, K_FORWARD, K_JUMP, K_LEFT, K_RELOAD, K_RIGHT, K_SPRINT,
 )
 from .combat import can_see
 from .entities import Entity
@@ -231,7 +231,7 @@ class BotBrain:
         if target is None or len(self.nav) == 0:
             return
         dist = self.ent.pos.distance(target.pos)
-        pref = self.t.preferred_range
+        pref = self.preferred_range()
         if dist > pref * 1.6:
             node = self.nav.nearest(target.pos)
             if node is not None and now >= self.repath_at:
@@ -249,6 +249,15 @@ class BotBrain:
             # In the pocket: stop path-following and just strafe.
             self.path = []
             self.path_index = 0
+
+    def preferred_range(self) -> float:
+        """How far this bot wants to be, given what it is holding.
+
+        A shotgun bot that keeps rifle spacing never lands a shot, and a sniper bot that
+        closes to knife range is free kills. This is the single biggest thing that makes
+        the new weapons feel intentional rather than randomly assigned.
+        """
+        return self.t.preferred_range * BOT_RANGE_BY_WEAPON.get(self.ent.arsenal.current, 1.0)
 
     def _set_path(self, goal_node: int) -> None:
         if len(self.nav) == 0:
@@ -422,6 +431,17 @@ class BotBrain:
             self.fire_pressed = False
             return keys
 
+        # Scoped weapons: bring the sights up first, and don't pull the trigger until
+        # they are actually up. Without this the sniper bots hip-fire a 9-degree cone and
+        # never hit anything, which reads as the weapon being broken.
+        dist_to_target = ent.pos.distance(target.pos)
+        want_ads = d.ads_fov > 0.0 and (d.scope or dist_to_target > 18.0)
+        if want_ads:
+            keys |= K_ADS
+            if ars.ads_progress < 0.85:
+                self.fire_pressed = False
+                return keys
+
         # Don't fire until the barrel is actually pointing at them.
         to = (target.center() - ent.eye_pos())
         dist = to.length()
@@ -458,13 +478,20 @@ class BotBrain:
                 self.next_burst_at = now + self.t.burst_pause * (0.7 + self.rng.random() * 0.6)
 
     def _weapon_choice(self) -> int:
-        """Pick the best usable weapon; returns a slot number or 0 for 'no change'."""
+        """Pick the best usable weapon; returns a slot number or 0 for 'no change'.
+
+        Walks the bot's own loadout in order rather than assuming a rifle, so it works
+        whatever primary the room handed out.
+        """
         ars = self.ent.arsenal
-        for wid, slot in (("rifle", 1), ("pistol", 2)):
+        for wid in ars.order:
+            weapon = WEAPONS[wid]
+            if weapon.melee:
+                continue
             st = ars.slots.get(wid)
             if st and (st.ammo > 0 or st.reserve > 0):
-                return 0 if ars.current == wid else slot
-        return 0 if ars.current == "knife" else 3
+                return 0 if ars.current == wid else weapon.slot
+        return 0 if ars.definition.melee else WEAPONS["knife"].slot
 
 
 class BotManager:
