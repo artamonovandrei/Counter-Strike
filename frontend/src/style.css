@@ -167,6 +167,49 @@ body {
   background: color-mix(in srgb, var(--c) 14%, transparent);
 }
 
+.weapon-picker {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.weapon-btn {
+  padding: 10px 4px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    color 0.12s;
+}
+
+.weapon-btn b {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.weapon-btn:hover {
+  color: var(--text);
+}
+
+.weapon-btn.selected {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255, 180, 84, 0.12);
+}
+
+.weapon-blurb {
+  min-height: 30px;
+  margin-top: 7px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 .settings {
   border-top: 1px solid var(--line);
   padding-top: 14px;
@@ -353,6 +396,10 @@ button.ghost:hover {
   height: 0;
 }
 
+.crosshair {
+  transition: opacity 0.12s;
+}
+
 .crosshair i {
   position: absolute;
   background: #eafff2;
@@ -438,6 +485,81 @@ button.ghost:hover {
   background: radial-gradient(120% 100% at 50% 50%, transparent 42%, rgba(190, 20, 30, 0.9));
 }
 
+/* ─── Scope ─────────────────────────────────────────────────────────────────── */
+
+/* Drawn in CSS rather than as a texture: it stays perfectly sharp at any resolution and
+   costs nothing to render. The black surround is a box-shadow with a huge spread, which
+   is the trick that makes one round div cover the whole screen. */
+.scope {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: #000;
+}
+
+.scope.active {
+  display: grid;
+  animation: scope-in 0.09s ease-out;
+}
+
+@keyframes scope-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.scope-lens {
+  position: relative;
+  width: min(88vh, 88vw);
+  height: min(88vh, 88vw);
+  border-radius: 50%;
+  background: transparent;
+  box-shadow:
+    0 0 0 6px rgba(0, 0, 0, 0.95),
+    0 0 0 9999px #05070a,
+    inset 0 0 70px rgba(0, 0, 0, 0.85);
+}
+
+/* Crosshair lines stop short of the centre so the target stays visible. */
+.scope-lens i {
+  position: absolute;
+  background: rgba(12, 14, 16, 0.9);
+}
+
+.scope-lens i.v {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1.5px;
+  transform: translateX(-50%);
+  clip-path: polygon(0 0, 100% 0, 100% 46%, 0 46%, 0 54%, 100% 54%, 100% 100%, 0 100%);
+}
+
+.scope-lens i.h {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1.5px;
+  transform: translateY(-50%);
+  clip-path: polygon(0 0, 46% 0, 46% 100%, 0 100%, 54% 100%, 54% 0, 100% 0, 100% 100%);
+}
+
+/* Mil-dot ladder below centre — pure decoration, but it reads as an optic instantly. */
+.scope-mil {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 26px);
+  width: 2px;
+  transform: translateX(-50%);
+  height: 120px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(12, 14, 16, 0.9) 0 2px,
+    transparent 2px 22px
+  );
+}
+
 .hud-bottom {
   position: absolute;
   left: 26px;
@@ -515,6 +637,49 @@ button.ghost:hover {
 
 .reloading.active {
   opacity: 1;
+}
+
+.loadout {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.lo {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: rgba(10, 13, 17, 0.55);
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.lo b {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.lo i {
+  font-style: normal;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.lo.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(255, 180, 84, 0.13);
+}
+
+.lo.active b {
+  background: var(--accent);
+  color: #17120a;
 }
 
 .killfeed {

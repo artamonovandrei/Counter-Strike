@@ -5,26 +5,46 @@
 // Settings persist in localStorage. Nothing gameplay-affecting lives here — sensitivity
 // and volume are client concerns, and the server neither knows nor cares about them.
 
-import { TEAM_COLORS, TEAM_NAMES, type Team } from '@shared/protocol';
+import {
+  PRIMARY_WEAPONS,
+  TEAM_COLORS,
+  TEAM_NAMES,
+  WEAPON_BLURBS,
+  type PrimaryWeaponId,
+  type Team,
+} from '@shared/protocol';
 
 export interface MenuSettings {
   name: string;
   team: Team | null;
+  primary: PrimaryWeaponId;
   sensitivity: number;
   volume: number;
   invertY: boolean;
   fov: number;
+  quality: 'low' | 'high';
 }
 
-const STORAGE_KEY = 'webstrike.settings.v1';
+// Bumped from v1 because the shape changed; a stale v1 blob would leave `primary`
+// undefined and the loadout picker blank.
+const STORAGE_KEY = 'webstrike.settings.v2';
 
 const DEFAULTS: MenuSettings = {
   name: '',
   team: null,
+  primary: 'rifle',
   sensitivity: 1.0,
   volume: 0.6,
   invertY: false,
   fov: 90,
+  quality: 'high',
+};
+
+const WEAPON_LABELS: Record<PrimaryWeaponId, string> = {
+  rifle: 'Rifle',
+  smg: 'SMG',
+  sniper: 'Sniper',
+  shotgun: 'Shotgun',
 };
 
 export function loadSettings(): MenuSettings {
@@ -87,6 +107,18 @@ export class Menu {
           </div>
         </div>
 
+        <div class="field">
+          <span>Primary weapon</span>
+          <div class="weapon-picker">
+            ${PRIMARY_WEAPONS.map(
+              (w) => `<button data-weapon="${w}" class="weapon-btn">
+                 <b>${WEAPON_LABELS[w]}</b>
+               </button>`,
+            ).join('')}
+          </div>
+          <div class="weapon-blurb"></div>
+        </div>
+
         ${this.settingsMarkup()}
 
         <button id="m-play" class="primary">Deploy</button>
@@ -101,7 +133,8 @@ export class Menu {
             <b>Mouse</b><span>Look</span>
             <b>Left click</b><span>Fire</span>
             <b>R</b><span>Reload</span>
-            <b>1 / 2 / 3</b><span>Rifle / Pistol / Knife</span>
+            <b>Right click</b><span>Aim down sights</span>
+            <b>1 / 2 / 3</b><span>Primary / Pistol / Knife</span>
             <b>Wheel</b><span>Cycle weapon</span>
             <b>G</b><span>Drop weapon</span>
             <b>Tab</b><span>Scoreboard</span>
@@ -114,6 +147,15 @@ export class Menu {
 
     this.wireSettings();
     this.updateTeamButtons();
+    this.updateWeaponButtons();
+
+    this.root.querySelectorAll<HTMLElement>('.weapon-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.settings.primary = btn.dataset.weapon as PrimaryWeaponId;
+        this.updateWeaponButtons();
+        this.persist();
+      });
+    });
 
     this.root.querySelectorAll<HTMLElement>('.team-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -188,6 +230,10 @@ export class Menu {
           <input id="m-invert" type="checkbox" ${s.invertY ? 'checked' : ''} />
           <span>Invert vertical look</span>
         </label>
+        <label class="check">
+          <input id="m-quality" type="checkbox" ${s.quality === 'high' ? 'checked' : ''} />
+          <span>High quality shadows</span>
+        </label>
       </div>`;
   }
 
@@ -213,6 +259,20 @@ export class Menu {
       this.settings.invertY = invert.checked;
       this.persist();
     });
+
+    const quality = this.root.querySelector<HTMLInputElement>('#m-quality');
+    quality?.addEventListener('change', () => {
+      this.settings.quality = quality.checked ? 'high' : 'low';
+      this.persist();
+    });
+  }
+
+  private updateWeaponButtons(): void {
+    this.root.querySelectorAll<HTMLElement>('.weapon-btn').forEach((btn) => {
+      btn.classList.toggle('selected', btn.dataset.weapon === this.settings.primary);
+    });
+    const blurb = this.root.querySelector<HTMLElement>('.weapon-blurb');
+    if (blurb) blurb.textContent = WEAPON_BLURBS[this.settings.primary] ?? '';
   }
 
   private updateTeamButtons(): void {

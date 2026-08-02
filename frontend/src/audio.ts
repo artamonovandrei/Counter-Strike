@@ -10,6 +10,9 @@
 
 export type SoundName =
   | 'rifle'
+  | 'smg'
+  | 'sniper'
+  | 'shotgun'
   | 'pistol'
   | 'knife'
   | 'reload'
@@ -77,8 +80,20 @@ export class AudioEngine {
     panner.connect(this.master);
 
     switch (name) {
+      // Each weapon gets its own body frequency, decay and crack. Pitch alone would make
+      // them sound like the same gun sped up; the decay length is what separates a snappy
+      // SMG from a rolling shotgun boom.
       case 'rifle':
         this.gunshot(t, panner, gain, 220, 0.14, 1800);
+        break;
+      case 'smg':
+        this.gunshot(t, panner, gain * 0.8, 300, 0.085, 2600);
+        break;
+      case 'sniper':
+        this.gunshot(t, panner, gain * 1.25, 130, 0.34, 1200, 0.75);
+        break;
+      case 'shotgun':
+        this.gunshot(t, panner, gain * 1.15, 105, 0.26, 900, 0.55);
         break;
       case 'pistol':
         this.gunshot(t, panner, gain * 0.85, 320, 0.11, 2400);
@@ -137,6 +152,7 @@ export class AudioEngine {
     bodyFreq: number,
     duration: number,
     crackFreq: number,
+    tailLength = 0.32,
   ): void {
     const ctx = this.ctx!;
 
@@ -164,14 +180,15 @@ export class AudioEngine {
     osc.start(t);
     osc.stop(t + duration + 0.02);
 
-    // Tail: a longer, quieter, low-passed noise wash standing in for the room.
-    const tail = this.noiseSource(t, 0.32);
+    // Tail: a longer, quieter, low-passed noise wash standing in for the room. Big
+    // weapons get a longer one, which is most of why they sound powerful.
+    const tail = this.noiseSource(t, tailLength);
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.setValueAtTime(900, t);
     const tailGain = ctx.createGain();
     tailGain.gain.setValueAtTime(gain * 0.14, t + 0.01);
-    tailGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+    tailGain.gain.exponentialRampToValueAtTime(0.0001, t + tailLength);
     tail.connect(lp).connect(tailGain).connect(out);
   }
 

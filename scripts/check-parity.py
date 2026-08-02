@@ -34,8 +34,9 @@ FRONTEND = ROOT / "frontend"
 
 BIT_NAMES = [
     "K_FORWARD", "K_BACK", "K_LEFT", "K_RIGHT", "K_JUMP", "K_SPRINT", "K_FIRE",
-    "K_RELOAD", "K_CROUCH",
+    "K_RELOAD", "K_CROUCH", "K_ADS",
     "F_DEAD", "F_GROUNDED", "F_RELOADING", "F_SPRINTING", "F_MOVING", "F_BOT",
+    "F_ADS", "F_AIRBORNE",
 ]
 
 GREEN = "\033[32m"
@@ -172,6 +173,15 @@ def check_movement(tolerance: float) -> bool:
             failed = True
             continue
         a, b = py_runs[name], ts_runs[name]
+
+        # A null here means the TypeScript side produced NaN — usually a missing config
+        # field, since JSON.stringify turns NaN into null. Say so plainly instead of
+        # dying with a TypeError halfway through the report.
+        if any(v is None for f in ("pos", "vel") for v in a[f] + b[f]):
+            bad(f"{name}: produced NaN — a config field is probably missing or misspelt")
+            failed = True
+            continue
+
         worst = 0.0
         for field in ("pos", "vel"):
             for i in range(3):

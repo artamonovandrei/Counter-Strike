@@ -9,7 +9,16 @@
 // If you change one file, change the other in the same commit.
 
 import type { GameConfig } from '@shared/protocol';
-import { K_BACK, K_CROUCH, K_FORWARD, K_JUMP, K_LEFT, K_RIGHT, K_SPRINT } from '@shared/protocol';
+import {
+  K_ADS,
+  K_BACK,
+  K_CROUCH,
+  K_FORWARD,
+  K_JUMP,
+  K_LEFT,
+  K_RIGHT,
+  K_SPRINT,
+} from '@shared/protocol';
 import type { AABB, CollisionWorld } from './world';
 
 const EPS = 1e-6;
@@ -211,9 +220,18 @@ export function stepMovement(
     }
   }
 
-  const sprinting = (keys & K_SPRINT) !== 0 && moveF > 0 && wasGrounded;
+  // Priority matters: aiming down sights overrides sprint, so holding shift while scoped
+  // does not quietly give you rifle mobility with sniper accuracy.
+  const ads = (keys & K_ADS) !== 0;
+  const sprinting = (keys & K_SPRINT) !== 0 && moveF > 0 && wasGrounded && !ads;
   const crouching = (keys & K_CROUCH) !== 0;
-  let wishSpeed = crouching ? cfg.crouchSpeed : sprinting ? cfg.sprintSpeed : cfg.walkSpeed;
+  let wishSpeed = ads
+    ? cfg.adsSpeed
+    : crouching
+      ? cfg.crouchSpeed
+      : sprinting
+        ? cfg.sprintSpeed
+        : cfg.walkSpeed;
   if (moveF === 0 && moveR === 0) wishSpeed = 0;
 
   let grounded = wasGrounded;

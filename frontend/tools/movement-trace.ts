@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  K_ADS,
   K_BACK,
   K_FORWARD,
   K_JUMP,
@@ -40,6 +41,7 @@ const CONFIG: GameConfig = {
   walkSpeed: 5.2,
   sprintSpeed: 7.2,
   crouchSpeed: 2.6,
+  adsSpeed: 2.9,
   groundAccel: 70.0,
   airAccel: 14.0,
   airCap: 1.2,
@@ -84,6 +86,16 @@ const SCENARIOS: Scenario[] = [
   { name: 'fall_from_height', start: [0, 8, 0], yaw: 0, keys: 0, ticks: 120 },
   { name: 'air_control', start: [-19, 6, 0], yaw: 1.2, keys: K_FORWARD | K_RIGHT, ticks: 120 },
   { name: 'corner_slide', start: [8.6, 0.5, -8], yaw: 0.6, keys: K_FORWARD, ticks: 160 },
+  // ADS changes the movement speed, so it has to be covered here or a divergence in the
+  // slow-walk would only show up as rubber-banding while scoped.
+  { name: 'ads_walk', start: [0, 0.5, -20], yaw: 0, keys: K_FORWARD | K_ADS, ticks: 120 },
+  {
+    name: 'ads_beats_sprint',
+    start: [0, 0.5, -20],
+    yaw: 0.3,
+    keys: K_FORWARD | K_SPRINT | K_ADS,
+    ticks: 120,
+  },
 ];
 
 function round5(v: number): number {

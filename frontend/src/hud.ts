@@ -41,11 +41,14 @@ export class HUD {
   private netgraphEl!: HTMLElement;
   private toastEl!: HTMLElement;
   private reloadEl!: HTMLElement;
+  private scopeEl!: HTMLElement;
+  private loadoutEl!: HTMLElement;
 
   private killfeed: KillfeedEntry[] = [];
   private chatLines: KillfeedEntry[] = [];
   private hitMarkerUntil = 0;
   private toastUntil = 0;
+  private loadoutKey = '';
 
   onChatSubmit: ((msg: string) => void) | null = null;
   onChatOpenChange: ((open: boolean) => void) | null = null;
@@ -68,6 +71,10 @@ export class HUD {
       <div class="crosshair"><i></i><i></i><i></i><i></i></div>
       <div class="hitmarker"><i></i><i></i><i></i><i></i></div>
       <div class="damage-flash"></div>
+      <div class="scope">
+        <div class="scope-lens"><i class="v"></i><i class="h"></i></div>
+        <div class="scope-mil"></div>
+      </div>
 
       <div class="killfeed"></div>
 
@@ -80,6 +87,7 @@ export class HUD {
           <div class="weapon-name"></div>
           <div class="ammo"><b>30</b><span>/90</span></div>
           <div class="reloading">RELOADING</div>
+          <div class="loadout"></div>
         </div>
       </div>
 
@@ -115,6 +123,8 @@ export class HUD {
     this.scoreboardEl = q('.scoreboard');
     this.netgraphEl = q('.netgraph');
     this.toastEl = q('.toast');
+    this.scopeEl = q('.scope');
+    this.loadoutEl = q('.loadout');
 
     const nameA = q<HTMLElement>('.score-a .team-name');
     const nameB = q<HTMLElement>('.score-b .team-name');
@@ -166,7 +176,46 @@ export class HUD {
 
   /** Crosshair gap tracks the server's spread model, so it reads as real feedback. */
   setSpread(spreadPixels: number): void {
-    this.crosshair.style.setProperty('--gap', `${spreadPixels.toFixed(1)}px`);
+    this.crosshair.style.setProperty('--gap', `${Math.min(90, spreadPixels).toFixed(1)}px`);
+  }
+
+  setCrosshairVisible(visible: boolean): void {
+    this.crosshair.style.opacity = visible ? '1' : '0';
+  }
+
+  /** Full scope overlay. Only the bolt gun uses this; everything else just zooms. */
+  setScope(active: boolean): void {
+    this.scopeEl.classList.toggle('active', active);
+  }
+
+  /**
+   * The weapon strip: what you're carrying and how much is left in each.
+   *
+   * With four possible primaries, "press 1" stops being self-explanatory — the strip is
+   * what tells a new player they even have a pistol.
+   */
+  setLoadout(
+    slots: { id: WeaponId; ammo: number; reserve: number }[],
+    current: WeaponId,
+    configs: Map<WeaponId, { name: string; slot: number; melee: boolean }>,
+  ): void {
+    const key = slots.map((s) => `${s.id}:${s.ammo}/${s.reserve}`).join('|') + `#${current}`;
+    if (key === this.loadoutKey) return; // rebuilding the DOM every snapshot is wasteful
+    this.loadoutKey = key;
+
+    const ordered = [...slots].sort(
+      (a, b) => (configs.get(a.id)?.slot ?? 9) - (configs.get(b.id)?.slot ?? 9),
+    );
+    this.loadoutEl.innerHTML = ordered
+      .map((s) => {
+        const cfg = configs.get(s.id);
+        const active = s.id === current ? ' active' : '';
+        const ammo = cfg?.melee ? '' : `<i>${s.ammo}</i>`;
+        return `<span class="lo${active}"><b>${cfg?.slot ?? '?'}</b>${escapeHtml(
+          shortName(cfg?.name ?? s.id),
+        )}${ammo}</span>`;
+      })
+      .join('');
   }
 
   // ── round state ─────────────────────────────────────────────────────────────
@@ -373,6 +422,11 @@ export class HUD {
   destroy(): void {
     this.root.remove();
   }
+}
+
+/** "MR-9 Rifle" -> "MR-9": the strip has no room for marketing names. */
+function shortName(full: string): string {
+  return full.split(' ')[0];
 }
 
 function escapeHtml(s: string): string {

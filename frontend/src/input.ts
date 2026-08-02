@@ -7,6 +7,7 @@
 // each one separately makes high-polling-rate mice feel jittery.
 
 import {
+  K_ADS,
   K_BACK,
   K_CROUCH,
   K_FIRE,
@@ -28,12 +29,21 @@ export interface InputSettings {
 export class InputManager {
   private pressed = new Set<string>();
   private mouseDown = false;
+  private rightMouseDown = false;
   private pendingYaw = 0;
   private pendingPitch = 0;
 
   yaw = 0;
   pitch = 0;
   locked = false;
+  /**
+   * Current FOV divided by the base FOV.
+   *
+   * Scaling mouse movement by this is what makes a 20-degree scope usable: without it,
+   * the same physical mouse motion sweeps four times as much of the visible world and
+   * fine aim becomes impossible.
+   */
+  zoomFactor = 1;
   /** Weapon slot requested this frame (1..3), or 0. Cleared once consumed. */
   weaponRequest = 0;
 
@@ -58,6 +68,7 @@ export class InputManager {
     // started the match (clicking "Deploy") has expired by the time the server's welcome
     // arrives. Without this, a player can end up looking at the world unable to move.
     this.canvas.addEventListener('mousedown', this.onCanvasClick);
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('mousedown', this.onMouseDown);
@@ -71,6 +82,7 @@ export class InputManager {
 
   dispose(): void {
     this.canvas.removeEventListener('mousedown', this.onCanvasClick);
+    this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('mousedown', this.onMouseDown);
@@ -100,6 +112,7 @@ export class InputManager {
   private releaseAll = (): void => {
     this.pressed.clear();
     this.mouseDown = false;
+    this.rightMouseDown = false;
   };
 
   private onPointerLockChange = (): void => {
@@ -150,17 +163,24 @@ export class InputManager {
 
   private onMouseDown = (e: MouseEvent): void => {
     if (e.button === 0) this.mouseDown = true;
+    if (e.button === 2) this.rightMouseDown = true;
   };
 
   private onMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.mouseDown = false;
+    if (e.button === 2) this.rightMouseDown = false;
+  };
+
+  // Right-click aims, so the browser context menu has to go.
+  private onContextMenu = (e: Event): void => {
+    e.preventDefault();
   };
 
   private onMouseMove = (e: MouseEvent): void => {
     if (!this.locked) return;
     // 0.0022 rad per count at sensitivity 1 lands close to the 400 DPI / 2.0 in-game
     // feel most players are used to.
-    const scale = 0.0022 * this.settings.sensitivity;
+    const scale = 0.0022 * this.settings.sensitivity * this.zoomFactor;
     this.pendingYaw -= e.movementX * scale;
     this.pendingPitch -= e.movementY * scale * (this.settings.invertY ? -1 : 1);
   };
@@ -197,6 +217,7 @@ export class InputManager {
     if (this.pressed.has('ControlLeft') || this.pressed.has('KeyC')) mask |= K_CROUCH;
     if (this.pressed.has('KeyR')) mask |= K_RELOAD;
     if (this.mouseDown && this.locked) mask |= K_FIRE;
+    if (this.rightMouseDown && this.locked) mask |= K_ADS;
     return mask;
   }
 

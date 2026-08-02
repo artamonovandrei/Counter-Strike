@@ -5,7 +5,7 @@
 // If you change a field name here, change it there too — `make check-parity`
 // diffs the two and fails the build when they drift.
 
-export const PROTOCOL_VERSION = '1.0.0';
+export const PROTOCOL_VERSION = '1.1.0';
 
 /** Socket.IO namespaces. */
 export const NS_LOBBY = '/lobby';
@@ -21,6 +21,7 @@ export const K_SPRINT = 1 << 5;
 export const K_FIRE = 1 << 6;
 export const K_RELOAD = 1 << 7;
 export const K_CROUCH = 1 << 8;
+export const K_ADS = 1 << 9;
 
 // ─── Entity state flags (server → client) ─────────────────────────────────────
 export const F_DEAD = 1 << 0;
@@ -29,10 +30,17 @@ export const F_RELOADING = 1 << 2;
 export const F_SPRINTING = 1 << 3;
 export const F_MOVING = 1 << 4;
 export const F_BOT = 1 << 5;
+export const F_ADS = 1 << 6;
+export const F_AIRBORNE = 1 << 7;
 
 export type Team = 'A' | 'B';
 export type Phase = 'warmup' | 'live' | 'intermission';
-export type WeaponId = 'rifle' | 'pistol' | 'knife';
+
+export type PrimaryWeaponId = 'rifle' | 'smg' | 'sniper' | 'shotgun';
+export type WeaponId = PrimaryWeaponId | 'pistol' | 'knife';
+export type WeaponCategory = 'primary' | 'secondary' | 'melee';
+
+export const PRIMARY_WEAPONS: PrimaryWeaponId[] = ['rifle', 'smg', 'sniper', 'shotgun'];
 
 export type Vec3 = [number, number, number];
 
@@ -44,6 +52,8 @@ export interface FindMatchRequest {
   name: string;
   /** Preferred team, or null to be auto-balanced. */
   team: Team | null;
+  /** Chosen primary weapon; the server falls back to the rifle if it doesn't like it. */
+  primary: PrimaryWeaponId | null;
 }
 
 /** server → client, event `match_found` */
@@ -78,12 +88,16 @@ export interface JoinRequest {
 
 export interface WeaponConfig {
   id: WeaponId;
+  /** 1 = primary, 2 = secondary, 3 = melee. Stable across loadouts. */
   slot: number;
+  category: WeaponCategory;
   name: string;
   magSize: number;
   reserveMax: number;
   rpm: number;
   auto: boolean;
+  /** >1 for shotguns. */
+  pellets: number;
   damage: number;
   headshotMult: number;
   range: number;
@@ -97,6 +111,12 @@ export interface WeaponConfig {
   recoilPitch: number;
   recoilYaw: number;
   switchTime: number;
+  /** Vertical FOV while sighted. 0 means the weapon cannot be aimed down sights. */
+  adsFov: number;
+  adsSpreadMult: number;
+  adsTime: number;
+  /** true = full scope overlay (sniper), false = simple zoom. */
+  scope: boolean;
   melee: boolean;
 }
 
@@ -113,6 +133,7 @@ export interface GameConfig {
   walkSpeed: number;
   sprintSpeed: number;
   crouchSpeed: number;
+  adsSpeed: number;
   groundAccel: number;
   airAccel: number;
   airCap: number;
@@ -133,7 +154,10 @@ export interface Welcome {
   roomId: string;
   team: Team;
   name: string;
+  /** The primary the server actually gave you — not necessarily the one you asked for. */
+  primary: PrimaryWeaponId;
   config: GameConfig;
+  /** Every weapon in the game, so any player's model can be rendered. */
   weapons: WeaponConfig[];
   map: MapData;
   serverTime: number;
@@ -235,6 +259,10 @@ export interface SelfState {
   rt: number;
   /** round-trip time in ms, measured by the server */
   pg: number;
+  /** how far the sights are raised, 0..1 */
+  ap: number;
+  /** ammo in every carried weapon, for the loadout strip in the HUD */
+  sl: { id: WeaponId; ammo: number; reserve: number }[];
 }
 
 /** A remote entity as seen in a snapshot. */
@@ -284,9 +312,12 @@ export interface PongMsg {
 // ─── Game events (server → client, event `ev`) ────────────────────────────────
 
 export type GameEvent =
+  /** One per trigger pull: drives the muzzle flash and the report. */
   | { e: 'shot'; id: number; w: WeaponId; o: Vec3; d: Vec3 }
+  /** One per projectile — nine of these for a shotgun blast, one for a rifle round. */
+  | { e: 'tracer'; id: number; o: Vec3; p: Vec3 }
   | { e: 'impact'; p: Vec3; n: Vec3; m: string }
-  | { e: 'hit'; dmg: number; hs: boolean; kill: boolean }
+  | { e: 'hit'; dmg: number; hs: boolean; kill: boolean; vid: number }
   | { e: 'hurt'; amt: number; hp: number; from: Vec3 }
   | { e: 'kick'; y: number; p: number }
   | { e: 'kill'; kid: number; vid: number; k: string; v: string; w: WeaponId; hs: boolean; team: Team }
@@ -319,6 +350,14 @@ export function hasFlag(flags: number, flag: number): boolean {
 export function otherTeam(t: Team): Team {
   return t === 'A' ? 'B' : 'A';
 }
+
+/** Display metadata for the loadout picker. Purely cosmetic; the server owns the stats. */
+export const WEAPON_BLURBS: Record<PrimaryWeaponId, string> = {
+  rifle: 'All-rounder. Controllable spray, hits hard at any sane range.',
+  smg: 'Fast and mobile. Stays accurate while moving, useless past mid.',
+  sniper: 'One shot, one kill. Hopeless unless you are scoped and still.',
+  shotgun: 'Nine pellets. Devastating in a doorway, a joke across the map.',
+};
 
 /** Team colours, used consistently by HUD, killfeed and player models. */
 export const TEAM_COLORS: Record<Team, string> = {

@@ -12,6 +12,7 @@ import {
   type GameEvent,
   type InputCmd,
   type MatchFoundResponse,
+  type PrimaryWeaponId,
   type Snapshot,
   type Team,
   type Welcome,
@@ -52,7 +53,11 @@ export class NetClient {
    * Rejects rather than retrying: a failure here is almost always "server full" or
    * "version mismatch", both of which need the player to see a message, not a spinner.
    */
-  findMatch(name: string, team: Team | null): Promise<MatchFoundResponse> {
+  findMatch(
+    name: string,
+    team: Team | null,
+    primary: PrimaryWeaponId | null,
+  ): Promise<MatchFoundResponse> {
     return new Promise((resolve, reject) => {
       const socket = io(`${SERVER_URL}${NS_LOBBY}`, {
         transports: ['websocket', 'polling'],
@@ -69,7 +74,7 @@ export class NetClient {
       const timer = window.setTimeout(() => fail('The server did not respond.'), 12000);
 
       socket.on('connect', () => {
-        socket.emit('find_match', { protocol: PROTOCOL_VERSION, name, team });
+        socket.emit('find_match', { protocol: PROTOCOL_VERSION, name, team, primary });
       });
 
       socket.on('match_found', (data: MatchFoundResponse) => {

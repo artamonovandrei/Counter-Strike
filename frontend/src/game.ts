@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import {
   F_DEAD,
   F_RELOADING,
+  K_ADS,
   K_FIRE,
   TEAM_NAMES,
   type GameEvent,
@@ -29,7 +30,14 @@ import type { MenuSettings } from './menu';
 import { NetClient, SnapshotBuffer } from './net';
 import { Predictor } from './predict';
 import { RemotePlayers } from './remote';
-import { applyFog, buildLevel, buildLights, buildSky, CollisionWorld } from './world';
+import {
+  applyFog,
+  buildLevel,
+  buildLights,
+  buildSky,
+  CollisionWorld,
+  configureRenderer,
+} from './world';
 
 const MAX_FRAME_DT = 0.1; // never simulate more than 100 ms of catch-up in one frame
 
@@ -74,6 +82,11 @@ export class Game {
   private lastPhase = '';
   private selfAmmo = 0;
   private selfReloading = false;
+  private maxAnisotropy = 4;
+  /** Locally predicted sight-raise, 0..1. Predicted so zoom is instant, not a round trip. */
+  private adsProgress = 0;
+  private adsHeld = false;
+  private scopeVisible = false;
 
   onExit: (() => void) | null = null;
   onFatal: ((message: string) => void) | null = null;
@@ -88,9 +101,12 @@ export class Game {
       antialias: true,
       powerPreference: 'high-performance',
     });
+    // Cap at 2x: on a 3x phone-class display the shading cost triples for a difference
+    // nobody can see at arm's length.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    configureRenderer(this.renderer, settings.quality);
+    this.maxAnisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
 
     this.camera = new THREE.PerspectiveCamera(
       settings.fov,
@@ -119,7 +135,11 @@ export class Game {
       onError: (msg) => this.hud?.toast(msg, 4000),
     });
 
-    const match = await this.net.findMatch(this.settings.name || 'Recruit', this.settings.team);
+    const match = await this.net.findMatch(
+      this.settings.name || 'Recruit',
+      this.settings.team,
+      this.settings.primary,
+    );
     await this.net.joinGame(match.ticket!);
   }
 
@@ -133,15 +153,16 @@ export class Game {
     // ── scene ────────────────────────────────────────────────────────────────
     this.scene.clear();
     this.scene.add(buildSky(w.map));
-    this.scene.add(buildLevel(w.map));
-    this.scene.add(buildLights(w.map));
+    this.scene.add(buildLevel(w.map, this.maxAnisotropy));
+    this.scene.add(buildLights(w.map, this.settings.quality));
     applyFog(this.scene, w.map);
 
     this.world = new CollisionWorld(w.map);
     this.predictor = new Predictor(this.world, w.config);
     this.remotes = new RemotePlayers(this.scene, w.team);
     this.effects = new Effects(this.scene, this.camera);
-    this.effects.setWeaponVisual('rifle');
+    this.currentWeapon = w.primary;
+    this.effects.setWeapon(w.primary, this.weapons.get(w.primary) ?? null);
 
     this.hud = new HUD(this.overlay, w.team);
     this.hud.onChatSubmit = (msg) => this.net.sendChat(msg);
@@ -199,8 +220,12 @@ export class Game {
     this.settings = s;
     this.input.settings = { sensitivity: s.sensitivity, invertY: s.invertY };
     this.audio.setVolume(s.volume);
-    this.camera.fov = s.fov;
-    this.camera.updateProjectionMatrix();
+    configureRenderer(this.renderer, s.quality);
+    // Don't stomp the FOV mid-zoom; updateCamera will pick the new base up next frame.
+    if (this.adsProgress === 0) {
+      this.camera.fov = s.fov;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   destroy(): void {
@@ -238,10 +263,14 @@ export class Game {
     const dead = (s.self.f & F_DEAD) !== 0;
     predictor.reconcile(s.self, s.ack, dead);
 
-    this.currentWeapon = s.self.w;
+    if (s.self.w !== this.currentWeapon) {
+      this.currentWeapon = s.self.w;
+      this.effects?.setWeapon(s.self.w, this.weapons.get(s.self.w) ?? null);
+      // A weapon swap drops the sights; don't leave the camera zoomed into a pistol.
+      this.adsProgress = 0;
+    }
     this.selfAmmo = s.self.am;
     this.selfReloading = (s.self.f & F_RELOADING) !== 0;
-    this.effects?.setWeaponVisual(s.self.w);
 
     const hud = this.hud;
     if (hud) {
@@ -251,6 +280,7 @@ export class Game {
       hud.setReloading((s.self.f & F_RELOADING) !== 0);
       hud.setRound(s.ph, s.pt, s.sc.A, s.sc.B);
       hud.setRespawn(dead ? s.self.rt : 0);
+      hud.setLoadout(s.self.sl ?? [], s.self.w, this.weapons);
     }
 
     if (dead && !this.wasDead) this.audio.play('death', 0, 0.9);
@@ -276,15 +306,19 @@ export class Game {
         if (e.id === this.myId) return;
         const origin = new THREE.Vector3(e.o[0], e.o[1], e.o[2]);
         const dir = new THREE.Vector3(e.d[0], e.d[1], e.d[2]).normalize();
-        const range = this.weapons.get(e.w)?.range ?? 100;
-        const hit = this.world?.raycast(origin, dir, range);
-        const end = hit
-          ? hit.point
-          : origin.clone().addScaledVector(dir, Math.min(range, 80));
-        effects?.tracer(origin, end);
-        effects?.muzzleFlash(origin, 0.8);
+        // Push the flash forward out of the shooter's face, toward the muzzle.
+        effects?.muzzleFlash(origin.clone().addScaledVector(dir, 0.5), 0.85);
         const { pan, gain } = spatialise(px, pz, this.input.yaw, e.o[0], e.o[2]);
-        this.audio.play(e.w === 'knife' ? 'knife' : e.w, pan, gain);
+        this.audio.play(soundFor(e.w), pan, gain);
+        break;
+      }
+      case 'tracer': {
+        // The server sends one of these per projectile, so a shotgun blast really does
+        // draw nine diverging tracers rather than one fudged average.
+        if (e.id === this.myId) return;
+        const origin = new THREE.Vector3(e.o[0], e.o[1], e.o[2]);
+        const end = new THREE.Vector3(e.p[0], e.p[1], e.p[2]);
+        effects?.tracer(origin.clone().addScaledVector(end.clone().sub(origin).normalize(), 0.5), end);
         break;
       }
       case 'impact': {
@@ -298,6 +332,14 @@ export class Game {
       case 'hit': {
         hud?.showHitMarker(e.hs, e.kill);
         this.audio.play(e.hs ? 'headshot' : 'hit', 0, 0.8);
+        // Blood on the body you actually hit, so you can see where shots are landing.
+        const victim = this.remotes?.positionOf(e.vid);
+        if (victim) {
+          effects?.bloodPuff(
+            new THREE.Vector3(victim.x, victim.y + 1.1, victim.z),
+            new THREE.Vector3(0, 1, 0),
+          );
+        }
         break;
       }
       case 'hurt': {
@@ -391,20 +433,51 @@ export class Game {
       this.sampleInputs(dt, now);
     }
 
+    this.updateAds(dt);
     this.predictor?.update(dt);
     this.updateCamera();
-    this.updateRemotes(dt, now);
+    this.updateRemotes(dt);
     this.effects?.update(dt);
     this.effects?.updateViewModel(
       dt,
-      this.predictor?.speed() ?? 0,
+      {
+        speed: this.predictor?.speed() ?? 0,
+        grounded: this.predictor?.grounded ?? true,
+        adsProgress: this.adsProgress,
+        reloading: this.selfReloading,
+        dead: this.wasDead,
+      },
       this.welcome!.config,
-      this.predictor?.grounded ?? true,
     );
     this.updateHud(now);
 
     this.renderer.render(this.scene, this.camera);
   };
+
+  /**
+   * Raise and lower the sights locally.
+   *
+   * Predicted rather than driven by the snapshot for the same reason movement is: a
+   * 100 ms delay between pressing the button and the zoom starting feels broken, even
+   * though the server is the one that decides what the spread actually was.
+   */
+  private updateAds(dt: number): void {
+    const def = this.weapons.get(this.currentWeapon);
+    const canAds = !!def && def.adsFov > 0 && !this.wasDead && !this.selfReloading;
+    const want = this.adsHeld && canAds;
+    const time = Math.max(0.05, def?.adsTime ?? 0.2);
+    const step = dt / time;
+    this.adsProgress = want
+      ? Math.min(1, this.adsProgress + step)
+      : Math.max(0, this.adsProgress - step);
+
+    // Scope overlay replaces the model at high zoom for genuinely scoped weapons only.
+    const scoped = def?.scope === true && this.adsProgress > 0.82;
+    if (scoped !== this.scopeVisible) {
+      this.scopeVisible = scoped;
+      this.hud?.setScope(scoped);
+    }
+  }
 
   /** Produce input commands at exactly the server tick rate. */
   private sampleInputs(dt: number, now: number): void {
@@ -420,6 +493,7 @@ export class Game {
       steps++;
 
       const keys = this.input.keyMask();
+      this.adsHeld = (keys & K_ADS) !== 0;
       const slot = this.input.consumeWeaponRequest(this.weapons.get(this.currentWeapon)?.slot ?? 1);
 
       this.inputSeq++;
@@ -482,26 +556,62 @@ export class Game {
       predictor.renderY() + this.welcome!.config.eyeHeight,
       predictor.renderZ(),
     );
-    const dir = new THREE.Vector3(
-      -Math.sin(this.input.yaw) * Math.cos(this.input.pitch),
-      Math.sin(this.input.pitch),
-      -Math.cos(this.input.yaw) * Math.cos(this.input.pitch),
-    );
 
     if (def.melee) {
       this.audio.play('knife', 0, 0.9);
-      this.effects?.muzzleFlash(eye, 0.2);
+      this.effects?.fired(0.3);
       return;
     }
 
-    const hit = this.world?.raycast(eye, dir, def.range);
-    const end = hit ? hit.point : eye.clone().addScaledVector(dir, def.range);
-    // Start the tracer at the muzzle, not the eye, or it visibly emerges from your face.
-    const muzzle = eye.clone().addScaledVector(dir, 0.55);
-    muzzle.y -= 0.12;
-    this.effects?.tracer(muzzle, end);
-    this.effects?.muzzleFlash(muzzle, 1);
-    this.audio.play(this.currentWeapon === 'pistol' ? 'pistol' : 'rifle', 0, 1);
+    this.effects?.fired(recoilStrength(def.id));
+    this.audio.play(soundFor(def.id), 0, 1);
+
+    // Tracers start at the view model's muzzle so they line up with the flash instead of
+    // sprouting from the player's forehead.
+    const muzzle = this.effects?.viewMuzzleWorld() ?? eye;
+
+    // Predict the same cone shape the server uses. It won't match shot for shot — the
+    // server has its own RNG — but the *spread* looks right, which is what the player
+    // actually reads, especially for a shotgun.
+    const spreadDeg = this.currentSpreadDeg(def);
+    const pellets = Math.max(1, def.pellets);
+    for (let i = 0; i < pellets; i++) {
+      const cone = i === 0 ? spreadDeg * 0.25 : spreadDeg;
+      const dir = this.spreadDirection(cone);
+      const hit = this.world?.raycast(eye, dir, def.range);
+      const end = hit ? hit.point : eye.clone().addScaledVector(dir, def.range);
+      this.effects?.tracer(muzzle, end);
+      if (hit) this.effects?.impact(hit.point, hit.normal, hit.material);
+    }
+  }
+
+  /** Direction from the current aim, perturbed inside a cone of `deg` degrees. */
+  private spreadDirection(deg: number): THREE.Vector3 {
+    let yaw = this.input.yaw;
+    let pitch = this.input.pitch;
+    if (deg > 0) {
+      const r = Math.sqrt(Math.random()) * deg * (Math.PI / 180);
+      const theta = Math.random() * Math.PI * 2;
+      yaw += Math.cos(theta) * r;
+      pitch += Math.sin(theta) * r;
+    }
+    return new THREE.Vector3(
+      -Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      -Math.cos(yaw) * Math.cos(pitch),
+    );
+  }
+
+  /** Mirror of Arsenal.current_spread_deg, minus the per-shot bloom the server tracks. */
+  private currentSpreadDeg(def: WeaponConfig): number {
+    if (def.melee) return 0;
+    const cfg = this.welcome!.config;
+    const speed = this.predictor?.speed() ?? 0;
+    let spread = def.spreadBase;
+    if (!this.predictor?.grounded) spread += def.spreadAir;
+    else if (speed > 0.1) spread += def.spreadMove * Math.min(1, speed / cfg.sprintSpeed);
+    if (this.adsProgress > 0) spread *= 1 + (def.adsSpreadMult - 1) * this.adsProgress;
+    return spread;
   }
 
   private updateCamera(): void {
@@ -514,9 +624,24 @@ export class Game {
     );
     this.camera.rotation.y = this.input.yaw;
     this.camera.rotation.x = this.input.pitch;
+
+    // Zoom follows the sights. Interpolating the FOV rather than snapping is what makes
+    // scoping read as raising a weapon instead of teleporting the camera.
+    const def = this.weapons.get(this.currentWeapon);
+    const targetFov =
+      def && def.adsFov > 0
+        ? THREE.MathUtils.lerp(this.settings.fov, def.adsFov, easeInOut(this.adsProgress))
+        : this.settings.fov;
+    if (Math.abs(this.camera.fov - targetFov) > 0.01) {
+      this.camera.fov = targetFov;
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Mouse sensitivity scales with the zoom, or a scoped sniper is unusable.
+    this.input.zoomFactor = targetFov / this.settings.fov;
   }
 
-  private updateRemotes(dt: number, now: number): void {
+  private updateRemotes(dt: number): void {
     if (!this.remotes || !this.welcome) return;
     // Render remote entities in the past by the interpolation delay. The server's clock
     // is tracked via the newest snapshot's timestamp plus local elapsed time.
@@ -525,7 +650,7 @@ export class Game {
       this.net.lastServerTime + elapsed - this.welcome.config.interpDelayMs;
     const pair = this.snapshots.pair(renderTime);
     if (!pair) return;
-    this.remotes.update(pair.from, pair.to, pair.alpha, dt, now);
+    this.remotes.update(pair.from, pair.to, pair.alpha, dt);
   }
 
   private updateHud(now: number): void {
@@ -535,13 +660,10 @@ export class Game {
 
     const def = this.weapons.get(this.currentWeapon);
     if (def && this.predictor) {
-      // Mirror the server's spread model closely enough that the crosshair is honest.
-      const speed = this.predictor.speed();
-      const cfg = this.welcome!.config;
-      let spread = def.spreadBase;
-      if (!this.predictor.grounded) spread += def.spreadAir;
-      else if (speed > 0.1) spread += def.spreadMove * Math.min(1, speed / cfg.sprintSpeed);
-      hud.setSpread(4 + spread * 6);
+      // The crosshair gap tracks the real spread model, so it is honest feedback rather
+      // than decoration — including the fact that a hip-fired sniper is a shotgun.
+      hud.setSpread(4 + this.currentSpreadDeg(def) * 6);
+      hud.setCrosshairVisible(!this.scopeVisible);
     }
 
     const latest = this.snapshots.latest();
@@ -555,4 +677,42 @@ export class Game {
       entities: latest?.ents.length ?? 0,
     });
   }
+}
+
+/** Which synthesised report a weapon uses. */
+function soundFor(w: WeaponId): 'rifle' | 'smg' | 'sniper' | 'shotgun' | 'pistol' | 'knife' {
+  switch (w) {
+    case 'smg':
+      return 'smg';
+    case 'sniper':
+      return 'sniper';
+    case 'shotgun':
+      return 'shotgun';
+    case 'pistol':
+      return 'pistol';
+    case 'knife':
+      return 'knife';
+    default:
+      return 'rifle';
+  }
+}
+
+/** How hard the view model kicks, relative to the rifle. */
+function recoilStrength(w: WeaponId): number {
+  switch (w) {
+    case 'sniper':
+      return 2.6;
+    case 'shotgun':
+      return 2.2;
+    case 'pistol':
+      return 1.1;
+    case 'smg':
+      return 0.7;
+    default:
+      return 1;
+  }
+}
+
+function easeInOut(t: number): number {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
