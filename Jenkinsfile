@@ -180,20 +180,26 @@ URL: ${env.BUILD_URL}
                     withCredentials([usernamePassword(credentialsId: 'ses-smtp', usernameVariable: 'SMTP_USER', passwordVariable: 'SMTP_PASS')]) {
                         sh """
                             python3 - <<'PY'
-import os, smtplib, ssl
-from email.mime.text import MIMEText
+import os, smtplib, ssl, uuid
+from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid
 
 user = os.environ['SMTP_USER']
 password = os.environ['SMTP_PASS']
 from_addr = 'artamonovandrei88@gmail.com'
-to_addr = 'artamonovandrei88@gmail.com'
+to_addr = os.environ.get('SES_TO', 'artamonovandrei88@gmail.com')
 subject = '''${mailSubject}'''
 body = '''${mailBody}'''
 
-msg = MIMEText(body, 'plain', 'utf-8')
+msg = EmailMessage()
 msg['Subject'] = subject
-msg['From'] = from_addr
+msg['From'] = formataddr(('WebStrike CI', from_addr))
 msg['To'] = to_addr
+msg['Date'] = formatdate(localtime=True)
+msg['Message-ID'] = make_msgid(domain='eu-central-1.amazonses.com')
+msg['Reply-To'] = from_addr
+msg['X-Mailer'] = 'WebStrike-Jenkins'
+msg.set_content(body)
 
 ctx = ssl.create_default_context()
 with smtplib.SMTP('email-smtp.eu-central-1.amazonaws.com', 587, timeout=30) as s:
@@ -201,8 +207,8 @@ with smtplib.SMTP('email-smtp.eu-central-1.amazonaws.com', 587, timeout=30) as s
     s.starttls(context=ctx)
     s.ehlo()
     s.login(user, password)
-    s.sendmail(from_addr, [to_addr], msg.as_string())
-print('SES_EMAIL_SENT_OK')
+    s.send_message(msg)
+print('SES_EMAIL_SENT_OK to=' + to_addr)
 PY
                         """
                     }
