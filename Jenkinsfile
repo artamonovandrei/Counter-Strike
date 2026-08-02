@@ -32,10 +32,12 @@ pipeline {
             steps {
                 sh '''
                     set -e
-                    python3 -m pip install --user -r backend/requirements.txt
+                    PY=python3.12
+                    command -v "$PY" >/dev/null || PY=python3
+                    $PY -m pip install --user -r backend/requirements.txt
                     export PATH="$HOME/.local/bin:$PATH"
                     cd backend
-                    python3 -m pytest -q --junitxml=../test-results.xml
+                    $PY -m pytest -q --junitxml=../test-results.xml
                 '''
             }
             post {
