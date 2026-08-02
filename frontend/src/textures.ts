@@ -9,10 +9,29 @@
 // The generators are seeded, so a given surface looks the same on every machine and every
 // reload. That matters more than it sounds: a wall whose grain changes between rounds is
 // distracting, and non-deterministic textures make screenshots useless for bug reports.
+//
+// ── Why everything here is nearly white ──────────────────────────────────────────────
+// These are *detail* maps, not colour maps. Three.js multiplies `material.map` by
+// `material.color`, so the surface colour comes from the map JSON and the texture only
+// adds variation around it. The first version of this file painted the base colour into
+// the canvas as well, which meant every surface got its colour applied twice — a mid-grey
+// wall at 0.42 came out at 0.18 and the whole level looked like it was lit by a candle.
+//
+// The rule: keep the mean luminance of every generator near NEUTRAL, and express detail as
+// small deviations around it.
 
 import * as THREE from 'three';
 
 const SIZE = 256;
+
+/**
+ * Mean brightness every generator aims for.
+ *
+ * Slightly under white so there is headroom for highlights without clipping. Multiplying
+ * the map colour by ~0.9 is a deliberate, uniform, *predictable* dimming — unlike the
+ * accidental squaring it replaces.
+ */
+const NEUTRAL = '#e6e6e6';
 
 /** Small deterministic PRNG — Mulberry32. Same seed, same texture, everywhere. */
 function rng(seed: number): () => number {
@@ -68,28 +87,29 @@ function speckle(
 }
 
 /** Rough concrete: fine grain, a few stains, occasional hairline cracks. */
-function concrete(seed: number, base: string): HTMLCanvasElement {
+function concrete(seed: number): HTMLCanvasElement {
   const { c, ctx } = canvas();
   const rand = rng(seed);
 
-  ctx.fillStyle = base;
+  ctx.fillStyle = NEUTRAL;
   ctx.fillRect(0, 0, SIZE, SIZE);
-  speckle(ctx, rand, 2600, 0.05, 2.2);
+  speckle(ctx, rand, 2600, 0.035, 2.2);
 
   // Broad blotches so the surface reads as uneven at a distance, not just noisy up close.
+  // Balanced light and dark, so the mean stays put.
   for (let i = 0; i < 14; i++) {
     const x = rand() * SIZE;
     const y = rand() * SIZE;
     const r = 18 + rand() * 46;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
     const dark = rand() > 0.5;
-    g.addColorStop(0, dark ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.10)');
+    g.addColorStop(0, dark ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.12)');
     g.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = g;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.20)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.13)';
   ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
     ctx.beginPath();
@@ -107,14 +127,16 @@ function concrete(seed: number, base: string): HTMLCanvasElement {
 }
 
 /** Painted breeze block: concrete plus a mortar grid. */
-function blockWall(seed: number, base: string): HTMLCanvasElement {
-  const c = concrete(seed, base);
+function blockWall(seed: number): HTMLCanvasElement {
+  const c = concrete(seed);
   const ctx = c.getContext('2d')!;
   const rand = rng(seed + 99);
 
   const rows = 4;
   const h = SIZE / rows;
-  ctx.strokeStyle = 'rgba(0,0,0,0.38)';
+  // Mortar reads as a groove from the contrast between the dark line and the highlight
+  // just below it, so the line itself doesn't need to be anywhere near black.
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
   ctx.lineWidth = 2;
   for (let r = 0; r <= rows; r++) {
     const y = r * h;
@@ -135,7 +157,7 @@ function blockWall(seed: number, base: string): HTMLCanvasElement {
   }
 
   // A highlight under each mortar line fakes a lip catching the light.
-  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
   ctx.lineWidth = 1;
   for (let r = 0; r <= rows; r++) {
     const y = r * h + 2;
@@ -144,21 +166,21 @@ function blockWall(seed: number, base: string): HTMLCanvasElement {
     ctx.lineTo(SIZE, y);
     ctx.stroke();
   }
-  speckle(ctx, rand, 400, 0.04, 1.6);
+  speckle(ctx, rand, 400, 0.03, 1.6);
   return c;
 }
 
 /** Scuffed floor: concrete with a faint expansion-joint grid and drag marks. */
-function floorSlab(seed: number, base: string): HTMLCanvasElement {
-  const c = concrete(seed, base);
+function floorSlab(seed: number): HTMLCanvasElement {
+  const c = concrete(seed);
   const ctx = c.getContext('2d')!;
   const rand = rng(seed + 7);
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
   ctx.lineWidth = 3;
   ctx.strokeRect(0, 0, SIZE, SIZE);
 
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.09)';
   ctx.lineWidth = 6;
   for (let i = 0; i < 9; i++) {
     ctx.beginPath();
@@ -171,11 +193,11 @@ function floorSlab(seed: number, base: string): HTMLCanvasElement {
 }
 
 /** Wooden crate: planks, grain, nails at the corners. */
-function crateWood(seed: number, base: string): HTMLCanvasElement {
+function crateWood(seed: number): HTMLCanvasElement {
   const { c, ctx } = canvas();
   const rand = rng(seed);
 
-  ctx.fillStyle = base;
+  ctx.fillStyle = NEUTRAL;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
   const planks = 5;
@@ -183,16 +205,15 @@ function crateWood(seed: number, base: string): HTMLCanvasElement {
   for (let p = 0; p < planks; p++) {
     const y = p * h;
     // Each plank gets its own tone so the crate doesn't look like printed wallpaper.
-    const shade = 0.86 + rand() * 0.28;
-    ctx.fillStyle = `rgba(255,255,255,${(shade - 1) * 0.5 + 0.5 > 0.5 ? 0.06 : 0})`;
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = `rgba(0,0,0,${Math.max(0, 1 - shade) * 0.5})`;
-    ctx.fillRect(0, y, SIZE, h);
-    ctx.fillStyle = `rgba(255,255,255,${Math.max(0, shade - 1) * 0.5})`;
+    // Symmetric around zero, so the average plank is exactly NEUTRAL.
+    const shade = (rand() - 0.5) * 0.22;
+    ctx.fillStyle = shade < 0
+      ? `rgba(0,0,0,${-shade})`
+      : `rgba(255,255,255,${shade})`;
     ctx.fillRect(0, y, SIZE, h);
 
     // Grain.
-    ctx.strokeStyle = 'rgba(60,35,12,0.22)';
+    ctx.strokeStyle = 'rgba(70,45,20,0.16)';
     ctx.lineWidth = 1;
     for (let g = 0; g < 9; g++) {
       const gy = y + 2 + rand() * (h - 4);
@@ -202,15 +223,15 @@ function crateWood(seed: number, base: string): HTMLCanvasElement {
       ctx.stroke();
     }
 
-    // Shadow gap between planks.
-    ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    // Shadow gap between planks, with a highlight on the lip above it.
+    ctx.fillStyle = 'rgba(0,0,0,0.26)';
     ctx.fillRect(0, y + h - 2, SIZE, 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.fillRect(0, y, SIZE, 1);
   }
 
   // Nails.
-  ctx.fillStyle = 'rgba(30,30,34,0.75)';
+  ctx.fillStyle = 'rgba(40,40,46,0.5)';
   for (let p = 0; p < planks; p++) {
     for (const x of [8, SIZE - 8]) {
       ctx.beginPath();
@@ -222,17 +243,17 @@ function crateWood(seed: number, base: string): HTMLCanvasElement {
 }
 
 /** Brushed metal: horizontal streaks, rivets, a little rust. */
-function brushedMetal(seed: number, base: string): HTMLCanvasElement {
+function brushedMetal(seed: number): HTMLCanvasElement {
   const { c, ctx } = canvas();
   const rand = rng(seed);
 
-  ctx.fillStyle = base;
+  ctx.fillStyle = NEUTRAL;
   ctx.fillRect(0, 0, SIZE, SIZE);
 
   ctx.lineWidth = 1;
   for (let i = 0; i < 900; i++) {
     const y = rand() * SIZE;
-    const alpha = rand() * 0.07;
+    const alpha = rand() * 0.06;
     ctx.strokeStyle = rand() > 0.5 ? `rgba(255,255,255,${alpha})` : `rgba(0,0,0,${alpha})`;
     ctx.beginPath();
     ctx.moveTo(rand() * SIZE, y);
@@ -241,10 +262,10 @@ function brushedMetal(seed: number, base: string): HTMLCanvasElement {
   }
 
   // Panel seam plus rivets: gives the eye a sense of scale on large surfaces.
-  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.26)';
   ctx.lineWidth = 2;
   ctx.strokeRect(4, 4, SIZE - 8, SIZE - 8);
-  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
   for (let i = 0; i < 8; i++) {
     const t = (i + 0.5) / 8;
     for (const [x, y] of [
@@ -264,15 +285,15 @@ function brushedMetal(seed: number, base: string): HTMLCanvasElement {
     const y = rand() * SIZE;
     const r = 8 + rand() * 22;
     const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-    g.addColorStop(0, 'rgba(120,62,28,0.28)');
-    g.addColorStop(1, 'rgba(120,62,28,0)');
+    g.addColorStop(0, 'rgba(150,88,44,0.2)');
+    g.addColorStop(1, 'rgba(150,88,44,0)');
     ctx.fillStyle = g;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
   return c;
 }
 
-const GENERATORS: Record<string, (seed: number, base: string) => HTMLCanvasElement> = {
+const GENERATORS: Record<string, (seed: number) => HTMLCanvasElement> = {
   floor: floorSlab,
   wall: blockWall,
   concrete: concrete,
@@ -292,13 +313,14 @@ export const TEXTURE_SCALE: Record<string, number> = {
 const cache = new Map<string, THREE.Texture>();
 
 /**
- * Texture for a material name. Cached, so the twenty crates on the map share one.
+ * Detail texture for a material name. Cached, so the twenty crates on the map share one.
  *
- * `base` is the flat colour from the map JSON — the texture is drawn *on top of* it, so
- * changing a colour in gen_map.py still recolours the surface without touching this file.
+ * The surface *colour* comes from `material.color`, fed by the map JSON. This only
+ * supplies variation around it, which is why changing a colour in `gen_map.py` recolours
+ * the surface without touching this file — and why nothing here darkens the level.
  */
-export function surfaceTexture(name: string, base: string, anisotropy = 4): THREE.Texture {
-  const key = `${name}|${base}|${anisotropy}`;
+export function surfaceTexture(name: string, anisotropy = 4): THREE.Texture {
+  const key = `${name}|${anisotropy}`;
   const hit = cache.get(key);
   if (hit) return hit;
 
@@ -307,9 +329,28 @@ export function surfaceTexture(name: string, base: string, anisotropy = 4): THRE
   let seed = 0;
   for (let i = 0; i < name.length; i++) seed = (seed * 31 + name.charCodeAt(i)) >>> 0;
 
-  const tex = finish(gen(seed + 1, base), anisotropy);
+  const tex = finish(gen(seed + 1), anisotropy);
   cache.set(key, tex);
   return tex;
+}
+
+/**
+ * Mean brightness of a generated texture, 0..1.
+ *
+ * Exists so the build can assert that these really are neutral detail maps. A generator
+ * that quietly drifts dark is exactly the bug this module already shipped once.
+ */
+export function meanLuminance(name: string): number {
+  const gen = GENERATORS[name] ?? concrete;
+  let seed = 0;
+  for (let i = 0; i < name.length; i++) seed = (seed * 31 + name.charCodeAt(i)) >>> 0;
+  const c = gen(seed + 1);
+  const data = c.getContext('2d')!.getImageData(0, 0, SIZE, SIZE).data;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    total += 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+  }
+  return total / (SIZE * SIZE) / 255;
 }
 
 /** Soft radial blob used for muzzle flashes and impact sparks. */

@@ -157,29 +157,37 @@ def build() -> dict:
         for x in (-6.0, -3.0, 0.0, 3.0, 6.0)
     ]
 
+    # Surface colours are read as-is by the renderer and multiplied by a near-white detail
+    # texture, so what you write here is roughly what you see. They are deliberately in the
+    # mid-to-light range: a competitive shooter needs players to be readable against the
+    # background, and dark scenery hides them far more effectively than it looks moody.
     materials = {
-        "floor": {"color": "#3b3f45", "roughness": 0.95, "metalness": 0.02},
-        "wall": {"color": "#6a6257", "roughness": 0.9, "metalness": 0.02},
-        "concrete": {"color": "#7b7468", "roughness": 0.88, "metalness": 0.03},
-        "crate": {"color": "#8a6136", "roughness": 0.8, "metalness": 0.02},
-        "metal": {"color": "#5c6672", "roughness": 0.45, "metalness": 0.65},
+        "floor": {"color": "#8d949d", "roughness": 0.95, "metalness": 0.02},
+        "wall": {"color": "#b3a893", "roughness": 0.9, "metalness": 0.02},
+        "concrete": {"color": "#bdb4a4", "roughness": 0.88, "metalness": 0.03},
+        "crate": {"color": "#c08b4e", "roughness": 0.8, "metalness": 0.02},
+        "metal": {"color": "#9aa6b5", "roughness": 0.45, "metalness": 0.55},
     }
 
     lights = [
-        {"p": [0.0, 9.0, 0.0], "color": "#fff2d8", "intensity": 1.1, "distance": 60.0},
-        {"p": [-19.0, 7.0, -12.0], "color": "#cfe3ff", "intensity": 0.8, "distance": 40.0},
-        {"p": [19.0, 7.0, 12.0], "color": "#cfe3ff", "intensity": 0.8, "distance": 40.0},
-        {"p": [0.0, 8.0, -22.0], "color": "#ffd9b0", "intensity": 0.7, "distance": 40.0},
-        {"p": [0.0, 8.0, 22.0], "color": "#ffd9b0", "intensity": 0.7, "distance": 40.0},
+        {"p": [0.0, 9.0, 0.0], "color": "#fff2d8", "intensity": 1.4, "distance": 70.0},
+        {"p": [-19.0, 7.0, -12.0], "color": "#dceaff", "intensity": 1.0, "distance": 48.0},
+        {"p": [19.0, 7.0, 12.0], "color": "#dceaff", "intensity": 1.0, "distance": 48.0},
+        {"p": [0.0, 8.0, -22.0], "color": "#ffe3c2", "intensity": 0.9, "distance": 48.0},
+        {"p": [0.0, 8.0, 22.0], "color": "#ffe3c2", "intensity": 0.9, "distance": 48.0},
     ]
 
     return {
         "name": MAP_NAME,
-        "version": 1,
+        "version": 2,
         "bounds": [-HALF, -1.0, -HALF, HALF, WALL_H + 2.0, HALF],
-        "ambient": "#404652",
-        "sky": ["#1b2430", "#59657a"],
-        "fog": {"color": "#2a323d", "near": 40.0, "far": 110.0},
+        # Overcast daylight rather than dusk. The ambient term is what fills the insides
+        # of the building and the shadow side of every crate.
+        "ambient": "#93a1b5",
+        "sky": ["#8fa3bb", "#c7d8ec"],
+        # Fog starts well beyond the longest sightline on the map (~56 m corner to corner),
+        # so it adds depth without greying out targets you are trying to shoot.
+        "fog": {"color": "#b9c8da", "near": 70.0, "far": 200.0},
         "materials": materials,
         "boxes": boxes,
         "spawns": {"A": spawn_a, "B": spawn_b},

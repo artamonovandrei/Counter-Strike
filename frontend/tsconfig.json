@@ -25,5 +25,9 @@
     },
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "tools", "../shared", "vite.config.ts"]
+  "include": ["src", "tools", "../shared", "vite.config.ts"],
+  // Excluded because it imports @napi-rs/canvas, which is an on-demand tool dependency
+  // rather than something every contributor should have to install. See the header of
+  // that file for how to run it.
+  "exclude": ["tools/texture-luminance.ts"]
 }

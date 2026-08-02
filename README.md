@@ -103,7 +103,8 @@ not a single binary asset in the repo.
 │   │   ├── hud.ts                # health/ammo/timer/score/crosshair/killfeed
 │   │   └── menu.ts               # name entry, team select, settings, scoreboard
 │   ├── tools/
-│   │   └── movement-trace.ts     # client half of the parity check
+│   │   ├── movement-trace.ts     # client half of the parity check
+│   │   └── texture-luminance.ts  # guards against textures drifting dark
 │   ├── index.html
 │   ├── vite.config.ts
 │   └── Dockerfile                # node build → caddy static + reverse proxy
@@ -238,6 +239,51 @@ snapshots that bracket the render time, which is why other players look smooth a
 every other entity to `now - (rtt/2 + interp_delay)` — the world as it appeared on your
 screen — resolves the ray, and then restores the present. This is capped at
 `LAGCOMP_MAX_MS` (250 ms) so a high-ping player cannot shoot into the distant past.
+
+## Lighting and visibility
+
+Surface brightness is the product of two things: the colour in `assets/maps/alley.json`
+and the generated detail texture that multiplies it. **The textures are near-white on
+purpose** — they add grain, mortar lines and plank shadows, not colour.
+
+Getting that wrong is not hypothetical. The first version painted the material colour into
+the canvas *as well* as leaving it on `material.color`, so every surface was its own colour
+squared: the floor's 0.24 albedo rendered at about 0.06 and the map was close to unplayable
+in the shaded areas. There is a tool to keep that from coming back:
+
+```bash
+cd frontend
+npm i -D @napi-rs/canvas
+./node_modules/.bin/esbuild tools/texture-luminance.ts --bundle --platform=node \
+    --format=cjs --external:@napi-rs/canvas --outfile=lum.cjs
+node lum.cjs ../assets/maps/alley.json
+```
+
+```
+material     texture   colour   surface
+floor        0.876     0.577    0.506
+wall         0.869     0.662    0.575
+concrete     0.880     0.709    0.624
+crate        0.853     0.572    0.488
+metal        0.876     0.645    0.566
+```
+
+It exits non-zero if a texture mean drops below 0.8 (it has stopped being a detail map) or
+a final albedo drops below 0.3 (players will not be readable against it).
+
+Other levers, in the order worth reaching for them:
+
+- **Brightness slider** in the menu — tone-mapping exposure, applied live, persisted.
+  Different monitors need genuinely different values; there is no correct default.
+- **`ambient`, `sky`, `lights`** in `gen_map.py`. There is no global illumination here, so
+  the ambient and hemisphere terms are the *only* light reaching the inside of the building
+  and the shadow side of every crate. Under-setting them makes parts of the map into places
+  players simply cannot see into — a gameplay bug wearing an art-direction costume.
+- **Tone mapping** is `NeutralToneMapping`, not ACES. ACES has a filmic toe that crushes
+  the low end, which looks great in a render and hides enemies in a shooter.
+- **Player materials** in `remote.ts` are deliberately lighter than the scenery. Realistic
+  dark fatigues make players nearly invisible against a wall in shadow, and "I never saw
+  him" is a worse experience than "that uniform is a bit bright".
 
 ## Tuning bots
 
@@ -426,6 +472,7 @@ Caddy at `infra/Caddyfile`.
 | Caddy loops on `ACME challenge failed` | DNS `A` record isn't pointing at the box yet, or port 80 is blocked in the security group. |
 | High CPU with many bots | Lower `BOT_LOGIC_HZ` to 8, or `BOTS_PER_TEAM`. Physics cost is linear in entities, AI cost is linear in entities². |
 | Low frame rate on a laptop | Turn off "High quality shadows" in the menu — it drops the shadow map to 1024 and switches to cheaper filtering. Lowering FOV also helps, since less of the map is drawn. |
+| Too dark / too bright | Use the **Brightness** slider in the menu (tone-mapping exposure, 0.7–2.2, applies live). If *everything* is dark rather than just your monitor, run the texture luminance check below — a detail texture that has drifted dark dims the whole level. |
 | Scoping feels sluggish | That's `adsTime` doing its job; the sniper deliberately takes 0.35 s. Quick-scoping is meant to be a trade, not free. |
 | Shotgun feels like it does nothing | Check the range. Damage is floored at 15% past 22 m by design — it is a doorway weapon. |
 | Pointer lock won't engage | Browsers require a user gesture and a secure context. Use `https://` or `localhost`. |

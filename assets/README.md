@@ -57,6 +57,18 @@ at −Z looking toward +Z; team B is the mirror.
 `gen_nav.py` keeps only the largest connected component. An isolated pocket (a node on top
 of a crate that nothing links to) would trap any bot that pathed into it.
 
+## Colours
+
+`materials[*].color` is the surface albedo, used as-is. The client multiplies it by a
+near-white generated detail texture (grain, mortar, plank shadows), so what you write here
+is roughly what you see — a colour at 0.6 luminance renders at about 0.52.
+
+Keep them in the mid-to-light range. There is no global illumination, so anything the sun
+does not reach is lit only by the `ambient` and hemisphere terms, and dark scenery hides
+players far more effectively than it looks like it will.
+
+Verify with `frontend/tools/texture-luminance.ts` (see the README) after changing them.
+
 ## Audio
 
 There isn't any, as data. Every sound is synthesised at runtime by

@@ -105,7 +105,7 @@ export class Game {
     // nobody can see at arm's length.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    configureRenderer(this.renderer, settings.quality);
+    configureRenderer(this.renderer, settings.quality, settings.brightness);
     this.maxAnisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
 
     this.camera = new THREE.PerspectiveCamera(
@@ -220,7 +220,9 @@ export class Game {
     this.settings = s;
     this.input.settings = { sensitivity: s.sensitivity, invertY: s.invertY };
     this.audio.setVolume(s.volume);
-    configureRenderer(this.renderer, s.quality);
+    // Applied live, so dragging the brightness slider in the pause menu shows the result
+    // on the frame behind it instead of after a rejoin.
+    configureRenderer(this.renderer, s.quality, s.brightness);
     // Don't stomp the FOV mid-zoom; updateCamera will pick the new base up next frame.
     if (this.adsProgress === 0) {
       this.camera.fov = s.fov;

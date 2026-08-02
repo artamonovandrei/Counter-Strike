@@ -289,11 +289,13 @@ export function buildLevel(map: MapData, anisotropy = 4): THREE.Group {
     const scale = 1 / (TEXTURE_SCALE[name] ?? 2);
 
     const geometry = buildBoxesGeometry(boxes, scale);
+    // `color` tints, `map` adds detail. The map is deliberately near-white so these two
+    // multiply to roughly the colour the level designer chose, rather than to its square.
     const material = new THREE.MeshStandardMaterial({
       color: new THREE.Color(def.color),
       roughness: def.roughness,
       metalness: def.metalness,
-      map: surfaceTexture(name, def.color, anisotropy),
+      map: surfaceTexture(name, anisotropy),
       vertexColors: true,
     });
 
@@ -479,11 +481,16 @@ export function buildLights(map: MapData, quality: 'low' | 'high' = 'high'): THR
 
   // A hemisphere light instead of flat ambient: sky colour from above, ground bounce from
   // below. Costs the same and immediately makes everything look less like plastic.
-  const [skyLow, skyHigh] = map.sky ?? ['#1b2430', '#59657a'];
-  group.add(new THREE.HemisphereLight(new THREE.Color(skyHigh), new THREE.Color(skyLow), 1.1));
-  group.add(new THREE.AmbientLight(new THREE.Color(map.ambient ?? '#404652'), 0.55));
+  //
+  // These are set generously on purpose. There is no global illumination here, so
+  // anything the sun cannot reach — inside the building, behind every crate — is lit by
+  // these two terms alone. Too low and half the map becomes a place players simply cannot
+  // see into, which is a gameplay problem long before it is an aesthetic one.
+  const [skyLow, skyHigh] = map.sky ?? ['#8fa3bb', '#c7d8ec'];
+  group.add(new THREE.HemisphereLight(new THREE.Color(skyHigh), new THREE.Color(skyLow), 2.0));
+  group.add(new THREE.AmbientLight(new THREE.Color(map.ambient ?? '#93a1b5'), 1.1));
 
-  const sun = new THREE.DirectionalLight(0xffe6c0, 2.4);
+  const sun = new THREE.DirectionalLight(0xfff0d6, 2.6);
   sun.position.copy(SUN_DIRECTION).multiplyScalar(90);
   sun.castShadow = true;
 
@@ -509,14 +516,16 @@ export function buildLights(map: MapData, quality: 'low' | 'high' = 'high'): THR
   group.add(sun);
   group.add(sun.target);
 
-  const fill = new THREE.DirectionalLight(0x9ec0ff, 0.45);
+  // Fill from the opposite side so the shadow side of a player is still readable — the
+  // difference between "in shadow" and "a silhouette you cannot identify".
+  const fill = new THREE.DirectionalLight(0xbcd4ff, 0.85);
   fill.position.set(40, 30, -30);
   group.add(fill);
 
   for (const l of map.lights ?? []) {
     const light = new THREE.PointLight(
       new THREE.Color(l.color),
-      l.intensity * 14,
+      l.intensity * 22,
       l.distance,
       2,
     );
@@ -534,13 +543,22 @@ export function applyFog(scene: THREE.Scene, map: MapData): void {
 /**
  * Renderer setup that has to happen once.
  *
- * ACES tone mapping is the single highest-impact line in this file: without it, bright
- * surfaces clip to flat white and the whole scene looks like a 2005 tech demo.
+ * Tone mapping choice matters more than it looks. ACES has a filmic shoulder *and* a toe
+ * that crushes the low end — great for cinematic renders, wrong for a shooter where the
+ * darkest 20% of the image is where enemies hide. `NeutralToneMapping` keeps highlights
+ * from clipping without eating the shadows, so it is the better fit here.
+ *
+ * `exposure` is user-controlled (the brightness slider): monitors vary enormously, and no
+ * single value is right for a bright laptop panel and a dim office display both.
  */
-export function configureRenderer(renderer: THREE.WebGLRenderer, quality: 'low' | 'high' = 'high'): void {
+export function configureRenderer(
+  renderer: THREE.WebGLRenderer,
+  quality: 'low' | 'high' = 'high',
+  exposure = 1.25,
+): void {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = exposure;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = quality === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 }

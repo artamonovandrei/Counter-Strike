@@ -1,6 +1,6 @@
 {
  "name": "alley",
- "version": 1,
+ "version": 2,
  "bounds": [
   -28.0,
   -1.0,
@@ -9,41 +9,41 @@
   9.0,
   28.0
  ],
- "ambient": "#404652",
+ "ambient": "#93a1b5",
  "sky": [
-  "#1b2430",
-  "#59657a"
+  "#8fa3bb",
+  "#c7d8ec"
  ],
  "fog": {
-  "color": "#2a323d",
-  "near": 40.0,
-  "far": 110.0
+  "color": "#b9c8da",
+  "near": 70.0,
+  "far": 200.0
  },
  "materials": {
   "floor": {
-   "color": "#3b3f45",
+   "color": "#8d949d",
    "roughness": 0.95,
    "metalness": 0.02
   },
   "wall": {
-   "color": "#6a6257",
+   "color": "#b3a893",
    "roughness": 0.9,
    "metalness": 0.02
   },
   "concrete": {
-   "color": "#7b7468",
+   "color": "#bdb4a4",
    "roughness": 0.88,
    "metalness": 0.03
   },
   "crate": {
-   "color": "#8a6136",
+   "color": "#c08b4e",
    "roughness": 0.8,
    "metalness": 0.02
   },
   "metal": {
-   "color": "#5c6672",
+   "color": "#9aa6b5",
    "roughness": 0.45,
-   "metalness": 0.65
+   "metalness": 0.55
   }
  },
  "boxes": [
@@ -1000,8 +1000,8 @@
     0.0
    ],
    "color": "#fff2d8",
-   "intensity": 1.1,
-   "distance": 60.0
+   "intensity": 1.4,
+   "distance": 70.0
   },
   {
    "p": [
@@ -1009,9 +1009,9 @@
     7.0,
     -12.0
    ],
-   "color": "#cfe3ff",
-   "intensity": 0.8,
-   "distance": 40.0
+   "color": "#dceaff",
+   "intensity": 1.0,
+   "distance": 48.0
   },
   {
    "p": [
@@ -1019,9 +1019,9 @@
     7.0,
     12.0
    ],
-   "color": "#cfe3ff",
-   "intensity": 0.8,
-   "distance": 40.0
+   "color": "#dceaff",
+   "intensity": 1.0,
+   "distance": 48.0
   },
   {
    "p": [
@@ -1029,9 +1029,9 @@
     8.0,
     -22.0
    ],
-   "color": "#ffd9b0",
-   "intensity": 0.7,
-   "distance": 40.0
+   "color": "#ffe3c2",
+   "intensity": 0.9,
+   "distance": 48.0
   },
   {
    "p": [
@@ -1039,9 +1039,9 @@
     8.0,
     22.0
    ],
-   "color": "#ffd9b0",
-   "intensity": 0.7,
-   "distance": 40.0
+   "color": "#ffe3c2",
+   "intensity": 0.9,
+   "distance": 48.0
   }
  ]
 }

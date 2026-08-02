@@ -23,11 +23,13 @@ export interface MenuSettings {
   invertY: boolean;
   fov: number;
   quality: 'low' | 'high';
+  /** Tone-mapping exposure. Monitors vary enormously; one baked-in value fits nobody. */
+  brightness: number;
 }
 
 // Bumped from v1 because the shape changed; a stale v1 blob would leave `primary`
 // undefined and the loadout picker blank.
-const STORAGE_KEY = 'webstrike.settings.v2';
+const STORAGE_KEY = 'webstrike.settings.v3';
 
 const DEFAULTS: MenuSettings = {
   name: '',
@@ -38,6 +40,7 @@ const DEFAULTS: MenuSettings = {
   invertY: false,
   fov: 90,
   quality: 'high',
+  brightness: 1.25,
 };
 
 const WEAPON_LABELS: Record<PrimaryWeaponId, string> = {
@@ -226,6 +229,10 @@ export class Menu {
           <span>Field of view <b id="v-fov">${s.fov}</b></span>
           <input id="m-fov" type="range" min="70" max="110" step="1" value="${s.fov}" />
         </label>
+        <label class="slider">
+          <span>Brightness <b id="v-bright">${s.brightness.toFixed(2)}</b></span>
+          <input id="m-bright" type="range" min="0.7" max="2.2" step="0.05" value="${s.brightness}" />
+        </label>
         <label class="check">
           <input id="m-invert" type="checkbox" ${s.invertY ? 'checked' : ''} />
           <span>Invert vertical look</span>
@@ -253,6 +260,12 @@ export class Menu {
     bind('#m-sens', '#v-sens', (v) => (this.settings.sensitivity = v), (v) => v.toFixed(2));
     bind('#m-vol', '#v-vol', (v) => (this.settings.volume = v), (v) => `${Math.round(v * 100)}%`);
     bind('#m-fov', '#v-fov', (v) => (this.settings.fov = v), (v) => String(v));
+    bind(
+      '#m-bright',
+      '#v-bright',
+      (v) => (this.settings.brightness = v),
+      (v) => v.toFixed(2),
+    );
 
     const invert = this.root.querySelector<HTMLInputElement>('#m-invert');
     invert?.addEventListener('change', () => {

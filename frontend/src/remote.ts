@@ -68,26 +68,31 @@ function teamPalette(team: Team): TeamPalette {
   if (hit) return hit;
 
   const accent = new THREE.Color(TEAM_COLORS[team]);
-  // Uniform is a desaturated, darkened version of the team colour; the accent stays
-  // saturated and is used sparingly. Dressing a whole player in a bright team colour
-  // reads as a toy and makes them far too easy to spot in shadow.
-  const uniform = accent.clone().multiplyScalar(0.42).lerp(new THREE.Color(0x2a2f36), 0.55);
+  // Players are deliberately lighter than the scenery they stand in front of. Realism
+  // would put soldiers in dark fatigues; that makes them nearly invisible against a wall
+  // in shadow, and "I never saw him" is a worse experience than "that uniform is a bit
+  // bright". The team colour also has to survive at 40 m, so it stays saturated.
+  const uniform = accent.clone().multiplyScalar(0.85).lerp(new THREE.Color(0x9aa3ae), 0.4);
 
   const palette: TeamPalette = {
-    uniform: new THREE.MeshStandardMaterial({ color: uniform, roughness: 0.88, metalness: 0.04 }),
+    uniform: new THREE.MeshStandardMaterial({ color: uniform, roughness: 0.85, metalness: 0.04 }),
     vest: new THREE.MeshStandardMaterial({
-      color: accent.clone().multiplyScalar(0.75),
-      roughness: 0.7,
-      metalness: 0.12,
+      color: accent.clone().multiplyScalar(1.0),
+      roughness: 0.65,
+      metalness: 0.1,
+      // A touch of self-illumination keeps the team colour readable even on the shadow
+      // side of a player, where there is no direct light at all.
+      emissive: accent.clone().multiplyScalar(0.18),
+      emissiveIntensity: 1,
     }),
-    gear: new THREE.MeshStandardMaterial({ color: 0x22262c, roughness: 0.85, metalness: 0.15 }),
-    skin: new THREE.MeshStandardMaterial({ color: 0xb07a55, roughness: 0.95, metalness: 0.0 }),
+    gear: new THREE.MeshStandardMaterial({ color: 0x4a515b, roughness: 0.8, metalness: 0.15 }),
+    skin: new THREE.MeshStandardMaterial({ color: 0xd0997a, roughness: 0.95, metalness: 0.0 }),
     visor: new THREE.MeshStandardMaterial({
-      color: 0x101418,
+      color: 0x1a2028,
       roughness: 0.2,
       metalness: 0.6,
-      emissive: accent.clone().multiplyScalar(0.25),
-      emissiveIntensity: 0.5,
+      emissive: accent.clone().multiplyScalar(0.4),
+      emissiveIntensity: 1,
     }),
   };
   palettes.set(team, palette);
