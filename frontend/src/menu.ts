@@ -25,11 +25,17 @@ export interface MenuSettings {
   quality: 'low' | 'high';
   /** Tone-mapping exposure. Monitors vary enormously; one baked-in value fits nobody. */
   brightness: number;
+  crosshairShape: 'cross' | 'tshape' | 'dot' | 'circle';
+  crosshairColor: string;
+  crosshairThickness: number;
+  crosshairLength: number;
+  crosshairDot: boolean;
+  crosshairOutline: boolean;
 }
 
 // Bumped from v1 because the shape changed; a stale v1 blob would leave `primary`
 // undefined and the loadout picker blank.
-const STORAGE_KEY = 'webstrike.settings.v3';
+const STORAGE_KEY = 'webstrike.settings.v4';
 
 const DEFAULTS: MenuSettings = {
   name: '',
@@ -41,7 +47,17 @@ const DEFAULTS: MenuSettings = {
   fov: 90,
   quality: 'high',
   brightness: 1.25,
+  crosshairShape: 'cross',
+  // Cyan-green reads clearly against concrete, brick, sky and blood alike, which is why
+  // most shooters converge on roughly this hue.
+  crosshairColor: '#4dffb8',
+  crosshairThickness: 2,
+  crosshairLength: 7,
+  crosshairDot: false,
+  crosshairOutline: true,
 };
+
+const CROSSHAIR_COLORS = ['#4dffb8', '#ffffff', '#ffd93d', '#ff4d6d', '#4ea8ff', '#b45cff'];
 
 const WEAPON_LABELS: Record<PrimaryWeaponId, string> = {
   rifle: 'Rifle',
@@ -241,7 +257,48 @@ export class Menu {
           <input id="m-quality" type="checkbox" ${s.quality === 'high' ? 'checked' : ''} />
           <span>High quality shadows</span>
         </label>
-      </div>`;
+      </div>
+
+      <details class="crosshair-settings">
+        <summary>Crosshair</summary>
+        <div class="xh-preview"><span class="xh-sample"></span></div>
+        <div class="xh-row">
+          ${(
+            [
+              ['cross', 'Cross'],
+              ['tshape', 'T'],
+              ['dot', 'Dot'],
+              ['circle', 'Circle'],
+            ] as const
+          )
+            .map(
+              ([k, label]) =>
+                `<button class="xh-shape" data-shape="${k}">${label}</button>`,
+            )
+            .join('')}
+        </div>
+        <div class="xh-row colors">
+          ${CROSSHAIR_COLORS.map(
+            (c) => `<button class="xh-color" data-color="${c}" style="--c:${c}"></button>`,
+          ).join('')}
+        </div>
+        <label class="slider">
+          <span>Thickness <b id="v-xht">${s.crosshairThickness}</b></span>
+          <input id="m-xht" type="range" min="1" max="6" step="1" value="${s.crosshairThickness}" />
+        </label>
+        <label class="slider">
+          <span>Length <b id="v-xhl">${s.crosshairLength}</b></span>
+          <input id="m-xhl" type="range" min="2" max="20" step="1" value="${s.crosshairLength}" />
+        </label>
+        <label class="check">
+          <input id="m-xhdot" type="checkbox" ${s.crosshairDot ? 'checked' : ''} />
+          <span>Centre dot</span>
+        </label>
+        <label class="check">
+          <input id="m-xhout" type="checkbox" ${s.crosshairOutline ? 'checked' : ''} />
+          <span>Outline</span>
+        </label>
+      </details>`;
   }
 
   private wireSettings(): void {
@@ -278,6 +335,61 @@ export class Menu {
       this.settings.quality = quality.checked ? 'high' : 'low';
       this.persist();
     });
+
+    // ── crosshair ────────────────────────────────────────────────────────────
+    bind('#m-xht', '#v-xht', (v) => (this.settings.crosshairThickness = v), (v) => String(v));
+    bind('#m-xhl', '#v-xhl', (v) => (this.settings.crosshairLength = v), (v) => String(v));
+
+    this.root.querySelectorAll<HTMLElement>('.xh-shape').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.settings.crosshairShape = btn.dataset.shape as MenuSettings['crosshairShape'];
+        this.updateCrosshairUi();
+        this.persist();
+      });
+    });
+    this.root.querySelectorAll<HTMLElement>('.xh-color').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.settings.crosshairColor = btn.dataset.color!;
+        this.updateCrosshairUi();
+        this.persist();
+      });
+    });
+
+    const xhDot = this.root.querySelector<HTMLInputElement>('#m-xhdot');
+    xhDot?.addEventListener('change', () => {
+      this.settings.crosshairDot = xhDot.checked;
+      this.updateCrosshairUi();
+      this.persist();
+    });
+    const xhOut = this.root.querySelector<HTMLInputElement>('#m-xhout');
+    xhOut?.addEventListener('change', () => {
+      this.settings.crosshairOutline = xhOut.checked;
+      this.updateCrosshairUi();
+      this.persist();
+    });
+
+    this.updateCrosshairUi();
+  }
+
+  /** Keep the little preview swatch in step with the settings. */
+  private updateCrosshairUi(): void {
+    const s = this.settings;
+    this.root.querySelectorAll<HTMLElement>('.xh-shape').forEach((b) => {
+      b.classList.toggle('selected', b.dataset.shape === s.crosshairShape);
+    });
+    this.root.querySelectorAll<HTMLElement>('.xh-color').forEach((b) => {
+      b.classList.toggle('selected', b.dataset.color === s.crosshairColor);
+    });
+    const sample = this.root.querySelector<HTMLElement>('.xh-sample');
+    if (sample) {
+      sample.style.setProperty('--c', s.crosshairColor);
+      sample.style.setProperty('--t', `${s.crosshairThickness}px`);
+      sample.style.setProperty('--l', `${s.crosshairLength}px`);
+      sample.dataset.shape = s.crosshairShape;
+      sample.classList.toggle('has-dot', s.crosshairDot);
+    }
   }
 
   private updateWeaponButtons(): void {

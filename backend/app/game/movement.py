@@ -22,6 +22,10 @@ from ..protocol import K_ADS, K_BACK, K_CROUCH, K_FORWARD, K_JUMP, K_LEFT, K_RIG
 from .mathx import EPS, Vec3, forward_xz, right_xz
 from .world import World
 
+# Overlaps shallower than this are treated as contact rather than penetration. 0.1 mm is
+# far below anything a player can perceive and far above floating-point noise.
+PENETRATION_EPS = 1e-4
+
 
 @dataclass
 class MoveResult:
@@ -44,19 +48,47 @@ def _resolve_axis(world: World, pos: Vec3, radius: float, height: float, axis: i
     Returns True if a correction was applied. Two passes: the first fixes the deepest
     penetration, the second catches the case where that push moved the player into a
     second brush (inside corners).
+
+    Three rules here exist because of a bug that dropped players through the world:
+
+    * **A graze is not a collision.** Brushes that merely touch — overlapping by less than
+      ``PENETRATION_EPS`` — are ignored. This is the one that actually mattered: a player
+      standing flush against a container overlapped it by 1e-10 on Z purely from floating
+      point, which was enough for the Y resolver to fire and eject them 1.8 m downwards.
+    * **Vertical pushes prefer "up".** A player only gets pushed *down* out of a brush if
+      their feet started below it, i.e. they jumped into a ceiling. Otherwise they are
+      standing on or in something and belong on top of it — you cannot sink through a
+      surface you are standing on.
+    * **The second pass may not reverse the first**, or the two passes can shove a player
+      back and forth between adjacent brushes and land them somewhere worse.
     """
     corrected = False
+    push_sign = 0.0  # locked in by the first applied correction
     for _ in range(2):
         box = _player_box(pos, radius, height)
         best_push = 0.0
         for i in world.overlapping(box):
             b = world.boxes[i]
+
+            # Penetration depth on every axis. If the shallowest is negligible the boxes
+            # are touching, not intersecting, and resolving would be a violent no-op.
+            pen_x = min(b[3] - box[0], box[3] - b[0])
+            pen_y = min(b[4] - box[1], box[4] - b[1])
+            pen_z = min(b[5] - box[2], box[5] - b[2])
+            if pen_x <= PENETRATION_EPS or pen_y <= PENETRATION_EPS or pen_z <= PENETRATION_EPS:
+                continue
+
             lo_idx = axis
             hi_idx = axis + 3
-            # Distance to leave the brush in each direction along this axis.
-            push_pos = b[hi_idx] - box[lo_idx]  # move + to exit
-            push_neg = b[lo_idx] - box[hi_idx]  # move - to exit
-            push = push_pos if abs(push_pos) < abs(push_neg) else push_neg
+            exit_pos = b[hi_idx] - box[lo_idx]  # distance to leave in the + direction
+            exit_neg = box[hi_idx] - b[lo_idx]  # distance to leave in the - direction
+            if axis == 1:
+                came_from_below = box[1] < b[1] - PENETRATION_EPS
+                push = -exit_neg if came_from_below else exit_pos
+            else:
+                push = exit_pos if exit_pos < exit_neg else -exit_neg
+            if push_sign != 0.0 and push * push_sign < 0.0:
+                continue
             if abs(push) > abs(best_push):
                 best_push = push
         if abs(best_push) < EPS:
@@ -67,6 +99,7 @@ def _resolve_axis(world: World, pos: Vec3, radius: float, height: float, axis: i
             pos.y += best_push
         else:
             pos.z += best_push
+        push_sign = 1.0 if best_push > 0.0 else -1.0
         corrected = True
     return corrected
 
@@ -111,7 +144,14 @@ def collide_and_slide(
 
             gained = (stepped.x - start_x) ** 2 + (stepped.z - start_z) ** 2
             current = (pos.x - start_x) ** 2 + (pos.z - start_z) ** 2
-            if gained > current + 1e-4 and stepped.y >= start_y - EPS:
+            # Only take the stepped-up result if it is genuinely better *and* leaves the
+            # player somewhere legal. Skipping the free check is how a player ends up
+            # embedded in a crate, which the axis resolver then has to rescue them from.
+            if (
+                gained > current + 1e-4
+                and stepped.y >= start_y - EPS
+                and _is_free(world, stepped, radius, height)
+            ):
                 pos.copy_from(stepped)
                 blocked = False
 

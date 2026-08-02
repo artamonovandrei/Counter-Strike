@@ -24,7 +24,7 @@ import {
 } from '@shared/protocol';
 import { AudioEngine, spatialise } from './audio';
 import { Effects } from './effects';
-import { HUD } from './hud';
+import { HUD, type CrosshairStyle, type ReticleKind } from './hud';
 import { InputManager } from './input';
 import type { MenuSettings } from './menu';
 import { NetClient, SnapshotBuffer } from './net';
@@ -165,6 +165,7 @@ export class Game {
     this.effects.setWeapon(w.primary, this.weapons.get(w.primary) ?? null);
 
     this.hud = new HUD(this.overlay, w.team);
+    this.hud.applyCrosshairStyle(crosshairStyleFrom(this.settings));
     this.hud.onChatSubmit = (msg) => this.net.sendChat(msg);
     this.hud.onChatOpenChange = (open) => {
       this.input.textEntryActive = open;
@@ -220,9 +221,10 @@ export class Game {
     this.settings = s;
     this.input.settings = { sensitivity: s.sensitivity, invertY: s.invertY };
     this.audio.setVolume(s.volume);
-    // Applied live, so dragging the brightness slider in the pause menu shows the result
-    // on the frame behind it instead of after a rejoin.
+    // Applied live, so dragging the brightness slider or restyling the crosshair in the
+    // pause menu shows the result on the frame behind it instead of after a rejoin.
     configureRenderer(this.renderer, s.quality, s.brightness);
+    this.hud?.applyCrosshairStyle(crosshairStyleFrom(s));
     // Don't stomp the FOV mid-zoom; updateCamera will pick the new base up next frame.
     if (this.adsProgress === 0) {
       this.camera.fov = s.fov;
@@ -665,7 +667,11 @@ export class Game {
       // The crosshair gap tracks the real spread model, so it is honest feedback rather
       // than decoration — including the fact that a hip-fired sniper is a shotgun.
       hud.setSpread(4 + this.currentSpreadDeg(def) * 6);
-      hud.setCrosshairVisible(!this.scopeVisible);
+      // While sighted, the weapon's own optic takes over from the HUD crosshair. Showing
+      // both at once is the classic way to make aiming look wrong.
+      const sighted = this.adsProgress > 0.45;
+      hud.setCrosshairVisible(!this.scopeVisible && !sighted);
+      hud.setReticle(reticleFor(def), this.adsProgress);
     }
 
     const latest = this.snapshots.latest();
@@ -717,4 +723,31 @@ function recoilStrength(w: WeaponId): number {
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+/** The optic each weapon actually carries, matching its model. */
+function reticleFor(def: WeaponConfig): ReticleKind {
+  if (def.scope) return 'none'; // the full scope overlay handles this one
+  switch (def.id) {
+    case 'rifle':
+    case 'smg':
+      return 'dot';
+    case 'shotgun':
+      return 'bead';
+    case 'pistol':
+      return 'irons';
+    default:
+      return 'none';
+  }
+}
+
+function crosshairStyleFrom(s: MenuSettings): CrosshairStyle {
+  return {
+    shape: s.crosshairShape,
+    color: s.crosshairColor,
+    thickness: s.crosshairThickness,
+    length: s.crosshairLength,
+    dot: s.crosshairDot,
+    outline: s.crosshairOutline,
+  };
 }

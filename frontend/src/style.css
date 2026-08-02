@@ -210,6 +210,129 @@ body {
   color: var(--muted);
 }
 
+/* ─── Crosshair settings ────────────────────────────────────────────────────── */
+
+.crosshair-settings {
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.crosshair-settings summary {
+  cursor: pointer;
+  padding: 4px 0 8px;
+}
+
+.xh-preview {
+  display: grid;
+  place-items: center;
+  height: 74px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  /* A checker so the preview shows how the colour holds up on light *and* dark. */
+  background:
+    linear-gradient(45deg, #2a3038 25%, transparent 25%) 0 0 / 16px 16px,
+    linear-gradient(-45deg, #2a3038 25%, transparent 25%) 0 8px / 16px 16px,
+    linear-gradient(45deg, transparent 75%, #2a3038 75%) 8px -8px / 16px 16px,
+    linear-gradient(-45deg, transparent 75%, #2a3038 75%) -8px 0 / 16px 16px,
+    #4a525c;
+}
+
+.xh-sample {
+  position: relative;
+  width: 0;
+  height: 0;
+}
+
+.xh-sample::before,
+.xh-sample::after {
+  content: '';
+  position: absolute;
+  background: var(--c);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.8);
+}
+
+.xh-sample::before {
+  width: var(--t);
+  height: calc(var(--l) * 2 + 10px);
+  left: calc(var(--t) / -2);
+  top: calc((var(--l) * 2 + 10px) / -2);
+}
+
+.xh-sample::after {
+  height: var(--t);
+  width: calc(var(--l) * 2 + 10px);
+  top: calc(var(--t) / -2);
+  left: calc((var(--l) * 2 + 10px) / -2);
+}
+
+.xh-sample[data-shape='dot']::before,
+.xh-sample[data-shape='dot']::after,
+.xh-sample[data-shape='tshape']::before {
+  display: none;
+}
+
+.xh-sample[data-shape='circle']::before {
+  width: calc(var(--l) * 2 + 10px);
+  height: calc(var(--l) * 2 + 10px);
+  left: calc((var(--l) * 2 + 10px) / -2);
+  border-radius: 50%;
+  background: none;
+  border: var(--t) solid var(--c);
+}
+
+.xh-sample[data-shape='circle']::after,
+.xh-sample[data-shape='dot']::after {
+  display: none;
+}
+
+.xh-sample.has-dot,
+.xh-sample[data-shape='dot'] {
+  box-shadow:
+    0 0 0 calc(var(--t) / 2) var(--c),
+    0 0 0 calc(var(--t) / 2 + 1px) rgba(0, 0, 0, 0.8);
+  border-radius: 50%;
+}
+
+.xh-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.xh-shape {
+  flex: 1;
+  padding: 7px 4px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.xh-shape.selected {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.xh-color {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  background: var(--c);
+  border: 2px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.xh-color.selected {
+  border-color: var(--text);
+}
+
 .settings {
   border-top: 1px solid var(--line);
   padding-top: 14px;
@@ -386,9 +509,14 @@ button.ghost:hover {
   height: 12px;
 }
 
-/* Crosshair: four ticks whose distance from centre tracks weapon spread. */
+/* ─── Crosshair ─────────────────────────────────────────────────────────────
+   Four arms whose distance from centre tracks the real weapon spread, plus an
+   optional centre dot and ring. Everything is driven by CSS variables so the
+   settings panel can restyle it without touching the DOM. */
+
 .crosshair,
-.hitmarker {
+.hitmarker,
+.reticle {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -397,43 +525,147 @@ button.ghost:hover {
 }
 
 .crosshair {
+  --xh-color: #eafff2;
+  --xh-thickness: 2px;
+  --xh-length: 7px;
   transition: opacity 0.12s;
 }
 
 .crosshair i {
   position: absolute;
-  background: #eafff2;
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+  background: var(--xh-color);
+  display: none;
 }
 
-.crosshair i:nth-child(1),
-.crosshair i:nth-child(2) {
-  width: 2px;
-  height: 7px;
-  left: -1px;
+/* The outline is what keeps a thin crosshair readable against a bright wall.
+   A drop-shadow on all four sides costs nothing and never blends in. */
+.crosshair.with-outline i {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 0 3px rgba(0, 0, 0, 0.6);
 }
 
-.crosshair i:nth-child(1) {
-  top: calc(-7px - var(--gap));
+.crosshair i.t,
+.crosshair i.b {
+  width: var(--xh-thickness);
+  height: var(--xh-length);
+  left: calc(var(--xh-thickness) / -2);
 }
 
-.crosshair i:nth-child(2) {
+.crosshair i.t {
+  top: calc(0px - var(--xh-length) - var(--gap));
+}
+
+.crosshair i.b {
   top: var(--gap);
 }
 
-.crosshair i:nth-child(3),
-.crosshair i:nth-child(4) {
-  width: 7px;
-  height: 2px;
-  top: -1px;
+.crosshair i.l,
+.crosshair i.r {
+  height: var(--xh-thickness);
+  width: var(--xh-length);
+  top: calc(var(--xh-thickness) / -2);
 }
 
-.crosshair i:nth-child(3) {
-  left: calc(-7px - var(--gap));
+.crosshair i.l {
+  left: calc(0px - var(--xh-length) - var(--gap));
 }
 
-.crosshair i:nth-child(4) {
+.crosshair i.r {
   left: var(--gap);
+}
+
+.crosshair i.dot {
+  width: var(--xh-thickness);
+  height: var(--xh-thickness);
+  left: calc(var(--xh-thickness) / -2);
+  top: calc(var(--xh-thickness) / -2);
+  border-radius: 50%;
+}
+
+.crosshair i.ring {
+  width: calc(var(--gap) * 2 + var(--xh-length));
+  height: calc(var(--gap) * 2 + var(--xh-length));
+  left: calc((var(--gap) * 2 + var(--xh-length)) / -2);
+  top: calc((var(--gap) * 2 + var(--xh-length)) / -2);
+  background: none;
+  border: var(--xh-thickness) solid var(--xh-color);
+  border-radius: 50%;
+}
+
+/* Shapes: a "T" drops the top arm, which stops the crosshair covering the head
+   of whatever you are aiming at — a real advantage, not just a look. */
+.crosshair.style-cross i.t,
+.crosshair.style-cross i.b,
+.crosshair.style-cross i.l,
+.crosshair.style-cross i.r,
+.crosshair.style-tshape i.b,
+.crosshair.style-tshape i.l,
+.crosshair.style-tshape i.r,
+.crosshair.style-circle i.ring {
+  display: block;
+}
+
+.crosshair.with-dot i.dot {
+  display: block;
+}
+
+.crosshair.style-dot i.dot {
+  display: block;
+}
+
+/* ─── Aim-down-sights reticles ───────────────────────────────────────────── */
+
+.reticle {
+  opacity: 0;
+  transition: opacity 0.06s linear;
+}
+
+.reticle i {
+  position: absolute;
+  display: none;
+}
+
+/* Red dot: a glowing pip with a faint halo, as an unmagnified optic looks. */
+.reticle i.rdot {
+  width: 5px;
+  height: 5px;
+  left: -2.5px;
+  top: -2.5px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow:
+    0 0 4px 1px rgba(255, 59, 48, 0.85),
+    0 0 12px 3px rgba(255, 59, 48, 0.35);
+}
+
+/* Shotgun bead: a fat brass dot on a short post, deliberately imprecise. */
+.reticle i.bead {
+  width: 9px;
+  height: 9px;
+  left: -4.5px;
+  top: -4.5px;
+  border-radius: 50%;
+  background: #ffd479;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.8),
+    0 0 8px rgba(255, 212, 121, 0.5);
+}
+
+/* Iron sights: front post rising into the centre from below. */
+.reticle i.post {
+  width: 3px;
+  height: 16px;
+  left: -1.5px;
+  top: 1px;
+  background: #14181d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.reticle.r-dot i.rdot,
+.reticle.r-bead i.bead,
+.reticle.r-irons i.post {
+  display: block;
 }
 
 .hitmarker {

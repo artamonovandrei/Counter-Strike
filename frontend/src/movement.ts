@@ -23,6 +23,10 @@ import type { AABB, CollisionWorld } from './world';
 
 const EPS = 1e-6;
 
+// Overlaps shallower than this are treated as contact rather than penetration. 0.1 mm is
+// far below anything a player can perceive and far above floating-point noise.
+const PENETRATION_EPS = 1e-4;
+
 export interface Vec3Like {
   x: number;
   y: number;
@@ -47,7 +51,21 @@ function playerBox(pos: Vec3Like, radius: number, height: number): AABB {
   };
 }
 
-/** Push `pos` out of any overlapping brush, moving only along `axis` (0=x, 1=y, 2=z). */
+/**
+ * Push `pos` out of any overlapping brush, moving only along `axis` (0=x, 1=y, 2=z).
+ *
+ * Three rules here exist because of a bug that dropped players through the world:
+ *
+ * - **A graze is not a collision.** Brushes overlapping by less than `PENETRATION_EPS` are
+ *   ignored. This is the one that actually mattered: a player standing flush against a
+ *   container overlapped it by 1e-10 on Z purely from floating point, which was enough for
+ *   the Y resolver to fire and eject them 1.8 m downwards.
+ * - **Vertical pushes prefer "up".** A player is only pushed *down* out of a brush if their
+ *   feet started below it (they jumped into a ceiling). Otherwise they are standing on or
+ *   in something and belong on top of it.
+ * - **The second pass may not reverse the first**, or the two passes can shove a player
+ *   back and forth between adjacent brushes.
+ */
 function resolveAxis(
   world: CollisionWorld,
   pos: Vec3Like,
@@ -56,6 +74,7 @@ function resolveAxis(
   axis: 0 | 1 | 2,
 ): boolean {
   let corrected = false;
+  let pushSign = 0;
   for (let pass = 0; pass < 2; pass++) {
     const box = playerBox(pos, radius, height);
     const boxLo = axis === 0 ? box.minX : axis === 1 ? box.minY : box.minZ;
@@ -64,17 +83,35 @@ function resolveAxis(
     let bestPush = 0;
     for (const i of world.overlapping(box)) {
       const b = world.boxes[i];
+
+      // Penetration depth on every axis. If the shallowest is negligible the boxes are
+      // touching, not intersecting, and resolving would be a violent no-op.
+      const penX = Math.min(b.maxX - box.minX, box.maxX - b.minX);
+      const penY = Math.min(b.maxY - box.minY, box.maxY - b.minY);
+      const penZ = Math.min(b.maxZ - box.minZ, box.maxZ - b.minZ);
+      if (penX <= PENETRATION_EPS || penY <= PENETRATION_EPS || penZ <= PENETRATION_EPS) {
+        continue;
+      }
+
       const bLo = axis === 0 ? b.minX : axis === 1 ? b.minY : b.minZ;
       const bHi = axis === 0 ? b.maxX : axis === 1 ? b.maxY : b.maxZ;
-      const pushPos = bHi - boxLo;
-      const pushNeg = bLo - boxHi;
-      const push = Math.abs(pushPos) < Math.abs(pushNeg) ? pushPos : pushNeg;
+      const exitPos = bHi - boxLo;
+      const exitNeg = boxHi - bLo;
+      let push: number;
+      if (axis === 1) {
+        const cameFromBelow = box.minY < b.minY - PENETRATION_EPS;
+        push = cameFromBelow ? -exitNeg : exitPos;
+      } else {
+        push = exitPos < exitNeg ? exitPos : -exitNeg;
+      }
+      if (pushSign !== 0 && push * pushSign < 0) continue;
       if (Math.abs(push) > Math.abs(bestPush)) bestPush = push;
     }
     if (Math.abs(bestPush) < EPS) break;
     if (axis === 0) pos.x += bestPush;
     else if (axis === 1) pos.y += bestPush;
     else pos.z += bestPush;
+    pushSign = bestPush > 0 ? 1 : -1;
     corrected = true;
   }
   return corrected;
@@ -119,7 +156,13 @@ export function collideAndSlide(
 
       const gained = (stepped.x - startX) ** 2 + (stepped.z - startZ) ** 2;
       const current = (pos.x - startX) ** 2 + (pos.z - startZ) ** 2;
-      if (gained > current + 1e-4 && stepped.y >= startY - EPS) {
+      // Only take the stepped-up result if it is genuinely better *and* leaves the player
+      // somewhere legal — skipping the free check is how a player ends up embedded.
+      if (
+        gained > current + 1e-4 &&
+        stepped.y >= startY - EPS &&
+        isFree(world, stepped, radius, height)
+      ) {
         pos.x = stepped.x;
         pos.y = stepped.y;
         pos.z = stepped.z;

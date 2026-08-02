@@ -312,6 +312,157 @@ export const TEXTURE_SCALE: Record<string, number> = {
 
 const cache = new Map<string, THREE.Texture>();
 
+// ─── Relief: normal and roughness maps derived from the colour map ────────────
+
+/**
+ * How much surface relief each material has, in normal-map strength.
+ *
+ * Derived rather than authored: the colour texture already encodes where the grooves are
+ * (mortar lines are dark, plank lips are light), so treating its luminance as a height
+ * field gets the relief for free and guarantees the bumps line up with the detail you can
+ * see. Hand-drawing a second set of maps would double the work and drift out of sync.
+ */
+const RELIEF: Record<string, number> = {
+  floor: 1.1,
+  wall: 2.6, // deep mortar courses
+  concrete: 1.5,
+  crate: 2.8, // plank gaps should read as real gaps
+  metal: 1.2,
+};
+
+/** Base roughness per material, modulated by the texture's own luminance. */
+const ROUGHNESS_RANGE: Record<string, [number, number]> = {
+  floor: [0.72, 0.98],
+  wall: [0.7, 0.96],
+  concrete: [0.68, 0.95],
+  crate: [0.6, 0.92],
+  metal: [0.25, 0.62],
+};
+
+export interface SurfaceMaps {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+  normalScale: number;
+}
+
+/** Luminance field of a canvas, 0..1, one value per pixel. */
+function heightField(c: HTMLCanvasElement): Float32Array {
+  const data = c.getContext('2d')!.getImageData(0, 0, SIZE, SIZE).data;
+  const out = new Float32Array(SIZE * SIZE);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    out[p] = (0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]) / 255;
+  }
+  return out;
+}
+
+/**
+ * Sobel the height field into a tangent-space normal map.
+ *
+ * Sampling wraps at the edges, which matters: these textures tile, and a normal map with
+ * hard seams shows up as a visible grid across every wall the moment a light moves.
+ */
+function normalFromHeight(height: Float32Array, strength: number): THREE.DataTexture {
+  const data = new Uint8Array(SIZE * SIZE * 4);
+  const at = (x: number, y: number): number =>
+    height[((y + SIZE) % SIZE) * SIZE + ((x + SIZE) % SIZE)];
+
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const tl = at(x - 1, y - 1);
+      const t = at(x, y - 1);
+      const tr = at(x + 1, y - 1);
+      const l = at(x - 1, y);
+      const r = at(x + 1, y);
+      const bl = at(x - 1, y + 1);
+      const b = at(x, y + 1);
+      const br = at(x + 1, y + 1);
+
+      const dx = tl + 2 * l + bl - (tr + 2 * r + br);
+      const dy = tl + 2 * t + tr - (bl + 2 * b + br);
+
+      let nx = dx * strength;
+      let ny = dy * strength;
+      const nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len;
+      ny /= len;
+
+      const o = (y * SIZE + x) * 4;
+      data[o] = (nx * 0.5 + 0.5) * 255;
+      data[o + 1] = (ny * 0.5 + 0.5) * 255;
+      data[o + 2] = ((1 / len) * 0.5 + 0.5) * 255;
+      data[o + 3] = 255;
+    }
+  }
+
+  const tex = new THREE.DataTexture(data, SIZE, SIZE, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  // Normal maps are vectors, not colour — tagging them sRGB would bend every normal.
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Roughness from the same height field.
+ *
+ * Recessed, darker areas (mortar, plank gaps, grime) are rougher; raised, lighter areas
+ * are smoother and catch a highlight. One channel of variation, but it is the difference
+ * between a surface that looks lit and one that looks painted.
+ */
+function roughnessFromHeight(height: Float32Array, lo: number, hi: number): THREE.DataTexture {
+  const data = new Uint8Array(SIZE * SIZE * 4);
+  for (let p = 0; p < height.length; p++) {
+    const rough = hi + (lo - hi) * height[p]; // dark -> hi, light -> lo
+    const v = Math.round(Math.max(0, Math.min(1, rough)) * 255);
+    const o = p * 4;
+    data[o] = v;
+    data[o + 1] = v;
+    data[o + 2] = v;
+    data[o + 3] = 255;
+  }
+  const tex = new THREE.DataTexture(data, SIZE, SIZE, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const mapsCache = new Map<string, SurfaceMaps>();
+
+/** Colour, normal and roughness maps for a material, all derived from one canvas. */
+export function surfaceMaps(name: string, anisotropy = 4): SurfaceMaps {
+  const key = `${name}|${anisotropy}`;
+  const hit = mapsCache.get(key);
+  if (hit) return hit;
+
+  const gen = GENERATORS[name] ?? concrete;
+  let seed = 0;
+  for (let i = 0; i < name.length; i++) seed = (seed * 31 + name.charCodeAt(i)) >>> 0;
+  const c = gen(seed + 1);
+
+  const height = heightField(c);
+  const [lo, hi] = ROUGHNESS_RANGE[name] ?? [0.6, 0.95];
+
+  const maps: SurfaceMaps = {
+    map: finish(c, anisotropy),
+    normalMap: normalFromHeight(height, RELIEF[name] ?? 1.5),
+    roughnessMap: roughnessFromHeight(height, lo, hi),
+    normalScale: 1,
+  };
+  mapsCache.set(key, maps);
+  return maps;
+}
+
 /**
  * Detail texture for a material name. Cached, so the twenty crates on the map share one.
  *
@@ -320,18 +471,7 @@ const cache = new Map<string, THREE.Texture>();
  * the surface without touching this file — and why nothing here darkens the level.
  */
 export function surfaceTexture(name: string, anisotropy = 4): THREE.Texture {
-  const key = `${name}|${anisotropy}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
-
-  const gen = GENERATORS[name] ?? concrete;
-  // Seed from the name so each material is distinct but stable across reloads.
-  let seed = 0;
-  for (let i = 0; i < name.length; i++) seed = (seed * 31 + name.charCodeAt(i)) >>> 0;
-
-  const tex = finish(gen(seed + 1), anisotropy);
-  cache.set(key, tex);
-  return tex;
+  return surfaceMaps(name, anisotropy).map;
 }
 
 /**
@@ -467,4 +607,10 @@ export function bulletHoleTexture(): THREE.Texture {
 export function disposeTextures(): void {
   for (const tex of cache.values()) tex.dispose();
   cache.clear();
+  for (const m of mapsCache.values()) {
+    m.map.dispose();
+    m.normalMap.dispose();
+    m.roughnessMap.dispose();
+  }
+  mapsCache.clear();
 }

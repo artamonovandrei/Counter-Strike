@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import type { MapData, MapBox } from '@shared/protocol';
-import { surfaceTexture, TEXTURE_SCALE } from './textures';
+import { surfaceMaps, TEXTURE_SCALE } from './textures';
 
 export interface AABB {
   minX: number;
@@ -289,13 +289,21 @@ export function buildLevel(map: MapData, anisotropy = 4): THREE.Group {
     const scale = 1 / (TEXTURE_SCALE[name] ?? 2);
 
     const geometry = buildBoxesGeometry(boxes, scale);
+    const maps = surfaceMaps(name, anisotropy);
     // `color` tints, `map` adds detail. The map is deliberately near-white so these two
     // multiply to roughly the colour the level designer chose, rather than to its square.
+    //
+    // The normal and roughness maps are derived from the same canvas, so the bumps line up
+    // exactly with the grain and mortar you can see — mortar courses read as recessed,
+    // plank lips catch a highlight, and flat grey boxes stop looking like flat grey boxes.
     const material = new THREE.MeshStandardMaterial({
       color: new THREE.Color(def.color),
       roughness: def.roughness,
       metalness: def.metalness,
-      map: surfaceTexture(name, anisotropy),
+      map: maps.map,
+      normalMap: maps.normalMap,
+      normalScale: new THREE.Vector2(maps.normalScale, maps.normalScale),
+      roughnessMap: maps.roughnessMap,
       vertexColors: true,
     });
 

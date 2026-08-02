@@ -192,7 +192,14 @@ class BotBrain:
         self.state = BotState.PATROL
         if len(self.nav) == 0:
             return
-        goal = self.nav.random_node_far_from(self.rng, self.ent.pos, 18.0)
+        # Head for high ground reasonably often. Snipers do it more, because a bolt gun on
+        # a balcony is the whole reason the balcony is there.
+        want_high = self.rng.random() < (0.5 if self.ent.arsenal.current == "sniper" else 0.25)
+        goal = None
+        if want_high:
+            goal = self.nav.random_elevated_node(self.rng, self.ent.pos)
+        if goal is None:
+            goal = self.nav.random_node_far_from(self.rng, self.ent.pos, 18.0)
         if goal is not None:
             self._set_path(goal)
         self.repath_at = now + 4.0

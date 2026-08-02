@@ -9,6 +9,17 @@
 
 import { TEAM_COLORS, TEAM_NAMES, type Phase, type ScoreRow, type Team, type WeaponId } from '@shared/protocol';
 
+export type ReticleKind = 'none' | 'dot' | 'bead' | 'irons';
+
+export interface CrosshairStyle {
+  shape: 'cross' | 'tshape' | 'dot' | 'circle';
+  color: string;
+  thickness: number;
+  length: number;
+  dot: boolean;
+  outline: boolean;
+}
+
 const KILLFEED_MAX = 5;
 const KILLFEED_TTL = 6000;
 const CHAT_MAX = 6;
@@ -43,6 +54,7 @@ export class HUD {
   private reloadEl!: HTMLElement;
   private scopeEl!: HTMLElement;
   private loadoutEl!: HTMLElement;
+  private reticleEl!: HTMLElement;
 
   private killfeed: KillfeedEntry[] = [];
   private chatLines: KillfeedEntry[] = [];
@@ -68,7 +80,15 @@ export class HUD {
         <div class="score score-b"><b>0</b><span class="team-name"></span></div>
       </div>
 
-      <div class="crosshair"><i></i><i></i><i></i><i></i></div>
+      <div class="crosshair">
+        <i class="t"></i><i class="b"></i><i class="l"></i><i class="r"></i>
+        <i class="dot"></i><i class="ring"></i>
+      </div>
+      <div class="reticle">
+        <i class="rdot"></i>
+        <i class="bead"></i>
+        <i class="post"></i>
+      </div>
       <div class="hitmarker"><i></i><i></i><i></i><i></i></div>
       <div class="damage-flash"></div>
       <div class="scope">
@@ -125,6 +145,7 @@ export class HUD {
     this.toastEl = q('.toast');
     this.scopeEl = q('.scope');
     this.loadoutEl = q('.loadout');
+    this.reticleEl = q('.reticle');
 
     const nameA = q<HTMLElement>('.score-a .team-name');
     const nameB = q<HTMLElement>('.score-b .team-name');
@@ -181,6 +202,35 @@ export class HUD {
 
   setCrosshairVisible(visible: boolean): void {
     this.crosshair.style.opacity = visible ? '1' : '0';
+  }
+
+  /** Apply the player's crosshair preferences. Cheap; called on every settings change. */
+  applyCrosshairStyle(style: CrosshairStyle): void {
+    const el = this.crosshair;
+    el.classList.remove('style-cross', 'style-dot', 'style-circle', 'style-tshape');
+    el.classList.add(`style-${style.shape}`);
+    el.classList.toggle('with-dot', style.dot);
+    el.classList.toggle('with-outline', style.outline);
+    el.style.setProperty('--xh-color', style.color);
+    el.style.setProperty('--xh-thickness', `${style.thickness}px`);
+    el.style.setProperty('--xh-length', `${style.length}px`);
+  }
+
+  /**
+   * Which sight to show while aiming.
+   *
+   * Each weapon gets the optic it visibly carries: a red dot for the rifle and SMG, a
+   * front bead for the shotgun, iron posts for the pistol, and the full scope for the bolt
+   * gun. Using one generic crosshair for all of them wastes the distinction the models
+   * already make, and the reticle is the clearest possible signal of what you're holding.
+   */
+  setReticle(kind: ReticleKind, progress: number): void {
+    const el = this.reticleEl;
+    el.classList.remove('r-none', 'r-dot', 'r-bead', 'r-irons');
+    el.classList.add(`r-${kind}`);
+    // Fade in over the second half of the raise, so it appears as the sight settles.
+    const alpha = Math.max(0, Math.min(1, (progress - 0.45) / 0.4));
+    el.style.opacity = kind === 'none' ? '0' : String(alpha);
   }
 
   /** Full scope overlay. Only the bolt gun uses this; everything else just zooms. */

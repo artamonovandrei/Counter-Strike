@@ -166,6 +166,70 @@ def test_no_tunnelling_at_max_speed():
     assert pos.x < 2.0
 
 
+def test_embedded_player_is_pushed_up_not_through_the_floor():
+    """Regression: a player exactly centred in a crate used to be ejected downwards.
+
+    The two exit distances are equal, the old tie-break chose "down", the player then
+    overlapped the floor brush, was ejected downwards again, and fell for the rest of the
+    match. Vertical resolution must always favour placing them on top.
+    """
+    w = make_world([{"p": [0.0, 0.9, 0.0], "s": [2.0, 1.8, 2.0], "m": "crate"}])
+    pos = Vec3(0.0, 0.0, 0.0)  # feet at the crate's base: perfectly centred inside it
+    vel = Vec3()
+    collide_and_slide(w, pos, vel, DT, True)
+
+    # Any exit is acceptable — sideways out of the crate or up onto it — as long as the
+    # player does not end up under the floor, which is what used to happen.
+    assert pos.y >= 0.0, f"must not sink below the floor, got y={pos.y}"
+
+    # Outside the crate to within the resolver's own contact tolerance. Asserting exact
+    # separation would fail on a 1e-16 residual, which is precisely the kind of graze the
+    # resolver is designed to ignore.
+    crate = (-1.0, 0.0, -1.0, 1.0, 1.8, 1.0)
+    pen_x = min(crate[3] - (pos.x - 0.4), (pos.x + 0.4) - crate[0])
+    pen_y = min(crate[4] - pos.y, (pos.y + 1.8) - crate[1])
+    pen_z = min(crate[5] - (pos.z - 0.4), (pos.z + 0.4) - crate[2])
+    assert min(pen_x, pen_y, pen_z) < 1e-3, "should be out of the crate, not still inside it"
+
+
+def test_head_in_a_ceiling_is_pushed_down():
+    """The mirror case: jumping into an overhang must stop you, not lift you onto it."""
+    # Ceiling at 2.0..2.4; standing height is 1.8, so it only matters mid-jump.
+    w = make_world([{"p": [0.0, 2.2, 0.0], "s": [8.0, 0.4, 8.0], "m": "concrete"}])
+    pos = Vec3(0.0, 0.0, 0.0)
+    vel = Vec3()
+    grounded = True
+    peak = 0.0
+    for i in range(90):
+        res = step_movement(w, pos, vel, 0.0, K_JUMP if i == 0 else 0, DT, grounded)
+        grounded = res.grounded
+        peak = max(peak, pos.y)
+        assert pos.y + MOVE.player_height <= 2.0 + 0.02, "head passed through the ceiling"
+        assert abs(pos.x) < 0.01 and abs(pos.z) < 0.01, "a ceiling must not shove you sideways"
+    assert peak > 0.15, "should still have left the ground"
+    assert pos.y == pytest.approx(0.0, abs=0.03), "and landed again"
+
+
+def test_player_never_falls_through_the_world_over_a_long_run():
+    """Sweep the arena floor at speed; nothing may end up below it."""
+    w = make_world(
+        [
+            {"p": [3.0, 0.9, 0.0], "s": [2.0, 1.8, 2.0], "m": "crate"},
+            {"p": [3.0, 0.6, 3.0], "s": [2.0, 1.2, 2.0], "m": "crate"},
+            {"p": [-3.0, 1.5, 1.0], "s": [1.0, 3.0, 4.0], "m": "wall"},
+        ]
+    )
+    for yaw_step in range(12):
+        yaw = yaw_step * math.tau / 12
+        pos = Vec3(0.0, 0.0, 0.0)
+        vel = Vec3()
+        grounded = True
+        for _ in range(240):
+            res = step_movement(w, pos, vel, yaw, K_FORWARD | K_SPRINT, DT, grounded)
+            grounded = res.grounded
+            assert pos.y > -0.5, f"fell through the world at yaw {yaw:.2f}: y={pos.y}"
+
+
 def test_fall_damage_thresholds():
     assert fall_damage(5.0) == 0
     assert fall_damage(MOVE.fall_damage_speed) == 0

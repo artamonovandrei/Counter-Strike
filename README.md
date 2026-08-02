@@ -311,6 +311,25 @@ The AI think rate is decoupled from physics: bots move every tick using the same
 integrator as humans, but only re-evaluate targets/paths at `BOT_LOGIC_HZ`, staggered
 across bots so the cost is spread over the frame budget.
 
+## Crosshair
+
+Fully configurable from the menu: shape (cross, T, dot, circle), colour, thickness, arm
+length, centre dot, outline. The gap tracks the *real* spread model — the same numbers the
+server uses to resolve your shots — so a hip-fired sniper's crosshair genuinely opens up to
+the size of its cone. It is feedback, not decoration.
+
+The T shape is worth knowing about: dropping the top arm stops the crosshair covering the
+head of whatever you're aiming at.
+
+Aiming down sights swaps the HUD crosshair for the optic the weapon visibly carries:
+
+| Weapon | Sight |
+| --- | --- |
+| Rifle, SMG | Red dot |
+| Shotgun | Brass bead |
+| Pistol | Iron post |
+| Sniper | Full scope overlay with mil-dot ladder |
+
 ## Map and navmesh workflow
 
 The level is a list of axis-aligned boxes. That is deliberate: the same JSON drives the
@@ -323,10 +342,29 @@ python -m app.scripts.gen_map            # writes assets/maps/alley.json
 python -m app.scripts.gen_nav alley      # writes assets/maps/alley.nav.json
 ```
 
-`gen_map.py` is plain Python — edit the `build()` function to change the layout. `gen_nav.py`
-samples a grid over the walkable area, drops points that are inside geometry or unsupported,
-then links nodes that have clearance and line of sight. Both scripts print a summary and are
-safe to re-run.
+`gen_map.py` is plain Python — edit `build()` to change the layout. The current level is a
+60 m square with rotational symmetry: a two-storey warehouse in the middle with galleries
+over both halves, two flank lanes with raised platforms, and connectors near each spawn.
+
+`gen_nav.py` scans each grid column for *every* standable height (not just the topmost
+surface — that version put all the nodes on the warehouse roof and none inside it), links
+neighbours that pass a swept-collider walkability test, and then splices in the routes the
+map declares explicitly.
+
+**Stairs are authored, not discovered.** A player's collider is 0.8 m across, so on any
+staircase with sensible tread depth it overlaps the riser above and every sample fails the
+"does a player fit here" test — the flight vanishes from the graph and the upper floor
+becomes unreachable. `gen_map.py` therefore emits `nav_paths`, a list of routes it knows
+exist because it placed them, and the generator chains nodes along each one. This is how
+real level tools handle ladders, and for the same reason.
+
+Both scripts print a summary and are safe to re-run. Watch the "nodes per floor height"
+line: if only one height survives, your upper storeys are disconnected.
+
+Sampling density is a performance knob, not a quality one — A* runs on the room's tick
+budget every time a bot re-plans. `SPACING = 1.8` gives ~1000 nodes and a worst-case tick
+around 4 ms; 1.2 gave 2200 nodes and pushed the worst tick to 15 ms against a 16.7 ms
+budget.
 
 To use a different map, set `MAP_NAME=yourmap` and drop `yourmap.json` + `yourmap.nav.json`
 into `assets/maps/`.
@@ -371,7 +409,15 @@ make check-parity                # client/server agreement
 cd frontend && npm run typecheck && npm run lint && npm run build
 ```
 
-The Python suite covers the movement integrator (gravity, jump apex measured against the
+`tests/test_map.py` is worth calling out separately: it runs against the *shipped* map
+rather than a synthetic one, and it walks every staircase the map declares using the real
+movement integrator. Both bugs it was written for were authoring mistakes that no unit test
+could have caught — a flight that ran into the wall it led to, and a 1.2 m crate parked at
+the foot of another flight, which the 0.35 m step-up cannot clear. It also asserts that the
+map is rotationally symmetric (a fairness property that is very easy to break by nudging one
+crate) and that no spawn can see an enemy spawn.
+
+The rest of the Python suite covers the movement integrator (gravity, jump apex measured against the
 analytic `v²/2g`, wall collision, step-up, tunnelling at 3× sprint speed, friction,
 diagonal normalisation), raycasting and hit classification (headshot vs body, damage
 falloff, wall occlusion, teammates never blocking a bullet), lag-compensated hit
@@ -467,6 +513,8 @@ Caddy at `infra/Caddyfile`.
 | You rubber-band constantly | Prediction desync — the movement constants on both sides drifted. Run `make check-parity`. |
 | Players teleport/stutter but you feel fine | Snapshot rate too low or `INTERP_DELAY_MS` shorter than the snapshot interval. It must be ≥ `1000/SNAPSHOT_HZ`. |
 | Bots stand still at spawn | Nav graph didn't load. `python -m app.scripts.gen_nav alley` and check the node/link counts in the log. |
+| Bots never use an upper floor | Check the "nodes per floor height" line from `gen_nav`. If the upper heights are missing, the staircase has no `nav_paths` entry or something is blocking its foot — `pytest tests/test_map.py` will say which. |
+| Players fall through the floor | Should be impossible; `PENETRATION_EPS` in both movement files exists to prevent it. If it recurs, a 1e-10 overlap is being treated as a collision again — see the comment on `_resolve_axis`. |
 | Bots walk into walls | Nav links were generated with too little clearance; raise `CLEARANCE` in `gen_nav.py`. |
 | Shots visibly hit but no damage | Lag comp rewind is exceeding `LAGCOMP_MAX_MS`, or the client's clock offset is wrong. Check `F3` netgraph RTT. |
 | Caddy loops on `ACME challenge failed` | DNS `A` record isn't pointing at the box yet, or port 80 is blocked in the security group. |

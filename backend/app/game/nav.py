@@ -43,6 +43,14 @@ class NavGraph:
             key = (int(n.pos.x // self._bucket_size), int(n.pos.z // self._bucket_size))
             self._bucket.setdefault(key, []).append(n.id)
 
+        # Ground level is whatever the majority of the map sits at; anything meaningfully
+        # above it counts as high ground worth going to.
+        if nodes:
+            ground = min(n.pos.y for n in nodes)
+            self._elevated = [n.id for n in nodes if n.pos.y > ground + 0.9]
+        else:
+            self._elevated = []
+
     # ── lookups ───────────────────────────────────────────────────────────────
 
     def __len__(self) -> int:
@@ -86,6 +94,25 @@ class NavGraph:
             return None
         return rng.randrange(len(self.nodes))
 
+    def random_elevated_node(
+        self, rng: random.Random, pos: Vec3, min_height: float = 1.0, max_dist: float = 45.0
+    ) -> Optional[int]:
+        """A random waypoint above ``min_height`` and within reach.
+
+        Bots otherwise almost never end up on the upper floors. Not because they cannot
+        path there — they can — but because a traverse to the gallery takes fifteen seconds
+        and something shoots at them first, so the route is abandoned every time. Picking
+        high ground as an explicit goal is what actually puts them up there.
+        """
+        if not self._elevated:
+            return None
+        max_sq = max_dist * max_dist
+        for _ in range(10):
+            nid = rng.choice(self._elevated)
+            if self.nodes[nid].pos.distance_sq(pos) <= max_sq:
+                return nid
+        return None
+
     def random_node_far_from(
         self, rng: random.Random, pos: Vec3, min_dist: float, attempts: int = 12
     ) -> Optional[int]:
@@ -122,7 +149,7 @@ class NavGraph:
 
     # ── pathfinding ───────────────────────────────────────────────────────────
 
-    def find_path(self, start: int, goal: int, max_expansions: int = 4000) -> List[int]:
+    def find_path(self, start: int, goal: int, max_expansions: int = 1500) -> List[int]:
         """A* over the graph. Returns [start, ..., goal], or [] if unreachable.
 
         Euclidean distance is an admissible heuristic here because edge costs are the
@@ -179,10 +206,20 @@ class NavGraph:
     def path_positions(self, path: Sequence[int]) -> List[Vec3]:
         return [self.nodes[i].pos for i in path]
 
+    # Nodes further apart in height than this are never smoothed together.
+    SMOOTH_MAX_RISE = 0.35
+
     def smooth_path(self, world: World, path: Sequence[int], eye: float = 0.9) -> List[int]:
         """Drop intermediate nodes that are redundant given clear line of sight.
 
         Without this, bots visibly zig-zag between graph nodes on open ground.
+
+        **Line of sight is only a proxy for walkability on level ground.** On a staircase
+        the bottom node can see the top node straight over the steps, so unguarded
+        smoothing collapses an entire flight into a single segment: the bot is told to walk
+        from the foot of the stairs to a point three metres up, has no idea the steps are
+        the way there, and simply never uses the upper floor. Refusing to smooth across a
+        height change keeps the flight intact.
         """
         if len(path) <= 2:
             return list(path)
@@ -194,7 +231,9 @@ class NavGraph:
             while j > i + 1:
                 a = self.nodes[path[i]].pos
                 b = self.nodes[path[j]].pos
-                if world.line_of_sight(Vec3(a.x, a.y + eye, a.z), Vec3(b.x, b.y + eye, b.z)):
+                if abs(a.y - b.y) <= self.SMOOTH_MAX_RISE and world.line_of_sight(
+                    Vec3(a.x, a.y + eye, a.z), Vec3(b.x, b.y + eye, b.z)
+                ):
                     break
                 j -= 1
             out.append(path[j])
