@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+caddy_data/
+caddy_config/
+*.sqlite3
+.idea/
+.vscode/

@@ -1,0 +1,91 @@
+# path: docker-compose.yml
+#
+#   cp .env.example .env && docker compose up --build
+#
+# With DOMAIN empty this serves plain HTTP on port 80. Set DOMAIN and ACME_EMAIL in .env
+# and Caddy provisions TLS automatically on first start.
+
+name: webstrike
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Same-origin behind Caddy, so the browser never sends a cross-origin request.
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      TICK_HZ: ${TICK_HZ:-60}
+      SNAPSHOT_HZ: ${SNAPSHOT_HZ:-30}
+      MAP_NAME: ${MAP_NAME:-alley}
+      ROOM_MAX_PLAYERS: ${ROOM_MAX_PLAYERS:-10}
+      ROOM_MAX_ROOMS: ${ROOM_MAX_ROOMS:-8}
+      BOTS_PER_TEAM: ${BOTS_PER_TEAM:-5}
+      BOT_DIFFICULTY: ${BOT_DIFFICULTY:-normal}
+      BOT_LOGIC_HZ: ${BOT_LOGIC_HZ:-10}
+      BOT_FILL: ${BOT_FILL:-true}
+      ROUND_SECONDS: ${ROUND_SECONDS:-360}
+      SCORE_LIMIT: ${SCORE_LIMIT:-50}
+      WARMUP_SECONDS: ${WARMUP_SECONDS:-5}
+      INTERMISSION_SECONDS: ${INTERMISSION_SECONDS:-10}
+      RESPAWN_SECONDS: ${RESPAWN_SECONDS:-3}
+      LAGCOMP_MAX_MS: ${LAGCOMP_MAX_MS:-250}
+      INTERP_DELAY_MS: ${INTERP_DELAY_MS:-100}
+      MAX_INPUTS_PER_TICK: ${MAX_INPUTS_PER_TICK:-8}
+      REDIS_URL: ${REDIS_URL:-}
+    expose:
+      - '8000'
+    # The simulation is a tight fixed-rate loop; starving it of CPU shows up directly as
+    # late snapshots. Reserve a core rather than letting it compete with the proxy.
+    deploy:
+      resources:
+        limits:
+          cpus: '1.50'
+          memory: 512M
+        reservations:
+          cpus: '0.50'
+          memory: 128M
+    networks:
+      - webstrike
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      DOMAIN: ${DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    volumes:
+      # Certificates must outlive the container, or every restart re-runs ACME and you
+      # will hit Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - webstrike
+
+  # Only needed when running more than one backend container. Uncomment, set REDIS_URL in
+  # .env to redis://redis:6379/0, and the Socket.IO manager switches to Redis fan-out.
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #   command: ['redis-server', '--save', '', '--appendonly', 'no']
+  #   networks: [webstrike]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  webstrike:
+    driver: bridge

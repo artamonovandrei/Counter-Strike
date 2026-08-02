@@ -1,0 +1,21 @@
+# Build context is the repo root for both images.
+.git/
+.github/
+.env
+.env.*
+!.env.example
+
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+backend/.venv/
+backend/tests/
+
+frontend/node_modules/
+frontend/dist/
+
+**/.DS_Store
+**/Thumbs.db
+*.md
+!assets/README.md

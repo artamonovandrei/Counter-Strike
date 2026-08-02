@@ -1,0 +1,241 @@
+// path: frontend/src/menu.ts
+//
+// Main menu, settings and the pause overlay.
+//
+// Settings persist in localStorage. Nothing gameplay-affecting lives here — sensitivity
+// and volume are client concerns, and the server neither knows nor cares about them.
+
+import { TEAM_COLORS, TEAM_NAMES, type Team } from '@shared/protocol';
+
+export interface MenuSettings {
+  name: string;
+  team: Team | null;
+  sensitivity: number;
+  volume: number;
+  invertY: boolean;
+  fov: number;
+}
+
+const STORAGE_KEY = 'webstrike.settings.v1';
+
+const DEFAULTS: MenuSettings = {
+  name: '',
+  team: null,
+  sensitivity: 1.0,
+  volume: 0.6,
+  invertY: false,
+  fov: 90,
+};
+
+export function loadSettings(): MenuSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ...DEFAULTS };
+    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<MenuSettings>) };
+  } catch {
+    // Corrupt or unavailable storage (private mode, disabled cookies) must not block play.
+    return { ...DEFAULTS };
+  }
+}
+
+export function saveSettings(s: MenuSettings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    /* not important enough to interrupt the player */
+  }
+}
+
+export class Menu {
+  private root: HTMLElement;
+  settings: MenuSettings;
+
+  onPlay: ((settings: MenuSettings) => void) | null = null;
+  onResume: (() => void) | null = null;
+  onQuit: (() => void) | null = null;
+  onSettingsChange: ((settings: MenuSettings) => void) | null = null;
+
+  constructor(container: HTMLElement) {
+    this.settings = loadSettings();
+    this.root = document.createElement('div');
+    this.root.className = 'menu active';
+    container.appendChild(this.root);
+    this.renderMain();
+  }
+
+  // ── screens ─────────────────────────────────────────────────────────────────
+
+  renderMain(status = ''): void {
+    this.root.classList.add('active');
+    this.root.innerHTML = `
+      <div class="menu-panel">
+        <h1>WEB<span>STRIKE</span></h1>
+        <p class="tagline">Team Deathmatch · server-authoritative · bots included</p>
+
+        <label class="field">
+          <span>Callsign</span>
+          <input id="m-name" type="text" maxlength="16" placeholder="Recruit"
+                 value="${escapeAttr(this.settings.name)}" />
+        </label>
+
+        <div class="field">
+          <span>Team</span>
+          <div class="team-picker">
+            <button data-team="auto" class="team-btn">Auto</button>
+            <button data-team="A" class="team-btn" style="--c:${TEAM_COLORS.A}">${TEAM_NAMES.A}</button>
+            <button data-team="B" class="team-btn" style="--c:${TEAM_COLORS.B}">${TEAM_NAMES.B}</button>
+          </div>
+        </div>
+
+        ${this.settingsMarkup()}
+
+        <button id="m-play" class="primary">Deploy</button>
+        <div class="status">${escapeHtml(status)}</div>
+
+        <details class="controls">
+          <summary>Controls</summary>
+          <div class="control-grid">
+            <b>W A S D</b><span>Move</span>
+            <b>Space</b><span>Jump</span>
+            <b>Shift</b><span>Sprint</span>
+            <b>Mouse</b><span>Look</span>
+            <b>Left click</b><span>Fire</span>
+            <b>R</b><span>Reload</span>
+            <b>1 / 2 / 3</b><span>Rifle / Pistol / Knife</span>
+            <b>Wheel</b><span>Cycle weapon</span>
+            <b>G</b><span>Drop weapon</span>
+            <b>Tab</b><span>Scoreboard</span>
+            <b>Y</b><span>Chat</span>
+            <b>F3</b><span>Net graph</span>
+            <b>Esc</b><span>Menu</span>
+          </div>
+        </details>
+      </div>`;
+
+    this.wireSettings();
+    this.updateTeamButtons();
+
+    this.root.querySelectorAll<HTMLElement>('.team-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const t = btn.dataset.team;
+        this.settings.team = t === 'auto' ? null : (t as Team);
+        this.updateTeamButtons();
+        this.persist();
+      });
+    });
+
+    const nameInput = this.root.querySelector<HTMLInputElement>('#m-name')!;
+    const play = this.root.querySelector<HTMLButtonElement>('#m-play')!;
+    const start = () => {
+      this.settings.name = nameInput.value.trim();
+      this.persist();
+      play.disabled = true;
+      play.textContent = 'Connecting…';
+      this.onPlay?.(this.settings);
+    };
+    play.addEventListener('click', start);
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') start();
+    });
+    nameInput.focus();
+  }
+
+  renderPause(): void {
+    this.root.classList.add('active');
+    this.root.innerHTML = `
+      <div class="menu-panel">
+        <h2>Paused</h2>
+        ${this.settingsMarkup()}
+        <button id="m-resume" class="primary">Resume</button>
+        <button id="m-quit" class="ghost">Leave match</button>
+      </div>`;
+    this.wireSettings();
+    this.root.querySelector('#m-resume')!.addEventListener('click', () => this.onResume?.());
+    this.root.querySelector('#m-quit')!.addEventListener('click', () => this.onQuit?.());
+  }
+
+  showError(message: string): void {
+    this.renderMain(message);
+  }
+
+  hide(): void {
+    this.root.classList.remove('active');
+  }
+
+  get visible(): boolean {
+    return this.root.classList.contains('active');
+  }
+
+  // ── settings widget (shared by both screens) ────────────────────────────────
+
+  private settingsMarkup(): string {
+    const s = this.settings;
+    return `
+      <div class="settings">
+        <label class="slider">
+          <span>Sensitivity <b id="v-sens">${s.sensitivity.toFixed(2)}</b></span>
+          <input id="m-sens" type="range" min="0.1" max="4" step="0.05" value="${s.sensitivity}" />
+        </label>
+        <label class="slider">
+          <span>Volume <b id="v-vol">${Math.round(s.volume * 100)}%</b></span>
+          <input id="m-vol" type="range" min="0" max="1" step="0.05" value="${s.volume}" />
+        </label>
+        <label class="slider">
+          <span>Field of view <b id="v-fov">${s.fov}</b></span>
+          <input id="m-fov" type="range" min="70" max="110" step="1" value="${s.fov}" />
+        </label>
+        <label class="check">
+          <input id="m-invert" type="checkbox" ${s.invertY ? 'checked' : ''} />
+          <span>Invert vertical look</span>
+        </label>
+      </div>`;
+  }
+
+  private wireSettings(): void {
+    const bind = (id: string, readout: string, apply: (v: number) => void, fmt: (v: number) => string) => {
+      const el = this.root.querySelector<HTMLInputElement>(id);
+      const out = this.root.querySelector<HTMLElement>(readout);
+      if (!el || !out) return;
+      el.addEventListener('input', () => {
+        const v = parseFloat(el.value);
+        apply(v);
+        out.textContent = fmt(v);
+        this.persist();
+      });
+    };
+
+    bind('#m-sens', '#v-sens', (v) => (this.settings.sensitivity = v), (v) => v.toFixed(2));
+    bind('#m-vol', '#v-vol', (v) => (this.settings.volume = v), (v) => `${Math.round(v * 100)}%`);
+    bind('#m-fov', '#v-fov', (v) => (this.settings.fov = v), (v) => String(v));
+
+    const invert = this.root.querySelector<HTMLInputElement>('#m-invert');
+    invert?.addEventListener('change', () => {
+      this.settings.invertY = invert.checked;
+      this.persist();
+    });
+  }
+
+  private updateTeamButtons(): void {
+    this.root.querySelectorAll<HTMLElement>('.team-btn').forEach((btn) => {
+      const t = btn.dataset.team === 'auto' ? null : (btn.dataset.team as Team);
+      btn.classList.toggle('selected', t === this.settings.team);
+    });
+  }
+
+  private persist(): void {
+    saveSettings(this.settings);
+    this.onSettingsChange?.(this.settings);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string,
+  );
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s);
+}

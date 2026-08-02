@@ -1,0 +1,88 @@
+# path: .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        run: pip install -r backend/requirements.txt
+
+      - name: Regenerate assets
+        # Assets are committed, but regenerating proves the generators still work and that
+        # the committed files aren't stale relative to the code that produces them.
+        working-directory: backend
+        run: |
+          python -m app.scripts.gen_map
+          python -m app.scripts.gen_nav alley
+
+      - name: Assets are up to date
+        run: git diff --exit-code assets/ || (echo "::error::Committed assets differ from generator output — run 'make assets'"; exit 1)
+
+      - name: Tests
+        working-directory: backend
+        run: python -m pytest -q
+
+      - name: Headless match smoke test
+        working-directory: backend
+        run: python -m app.scripts.run_headless_match --bots 10 --ticks 4000
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci || npm install
+
+      - name: Type-check
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  parity:
+    # The important one: the client and server movement integrators must agree, or every
+    # player rubber-bands. Needs both toolchains, so it runs as its own job.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: pip install -r backend/requirements.txt
+      - working-directory: frontend
+        run: npm ci || npm install
+
+      - name: Client/server parity
+        run: python scripts/check-parity.py

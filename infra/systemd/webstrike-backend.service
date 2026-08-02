@@ -1,0 +1,49 @@
+# path: infra/systemd/webstrike-backend.service
+#
+# Alternative to Docker. See infra/systemd/README.md for installation.
+
+[Unit]
+Description=WebStrike game server
+Documentation=https://github.com/your-org/webstrike
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=webstrike
+Group=webstrike
+WorkingDirectory=/srv/webstrike/backend
+Environment="PYTHONUNBUFFERED=1"
+Environment="ASSETS_DIR=/srv/webstrike/assets"
+EnvironmentFile=/srv/webstrike/.env
+
+ExecStart=/srv/webstrike/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 --no-access-log
+
+Restart=always
+RestartSec=3
+# A crash loop should back off rather than hammer the box.
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# The simulation is latency-sensitive; give it priority over background work.
+Nice=-5
+
+# ── hardening ────────────────────────────────────────────────────────────────
+# The server writes nothing to disk at runtime, so it can be locked down hard.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadOnlyPaths=/srv/webstrike
+
+[Install]
+WantedBy=multi-user.target

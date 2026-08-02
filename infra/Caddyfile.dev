@@ -1,0 +1,29 @@
+# path: infra/Caddyfile.dev
+#
+# Optional: put a proxy in front of `vite dev` + `uvicorn --reload` so the browser sees a
+# single origin during development. You do not need this — vite.config.ts already proxies
+# /api and /socket.io — but it is useful when testing from another device on the LAN,
+# where Vite's own proxy is bound to localhost.
+#
+#   caddy run --config infra/Caddyfile.dev
+
+:8080 {
+	handle /socket.io/* {
+		reverse_proxy 127.0.0.1:8000 {
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Vite's dev server needs its own WebSocket for hot reload; reverse_proxy passes it
+	# through unchanged.
+	handle {
+		reverse_proxy 127.0.0.1:5173
+	}
+}
