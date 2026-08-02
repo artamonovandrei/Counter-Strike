@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 from ..config import MOVE, MoveConfig
-from ..protocol import K_BACK, K_CROUCH, K_FORWARD, K_JUMP, K_LEFT, K_RIGHT, K_SPRINT
+from ..protocol import K_ADS, K_BACK, K_CROUCH, K_FORWARD, K_JUMP, K_LEFT, K_RIGHT, K_SPRINT
 from .mathx import EPS, Vec3, forward_xz, right_xz
 from .world import World
 
@@ -210,9 +210,15 @@ def step_movement(
 
     # Sprinting is forward-only and grounded-only; it is not a speed multiplier you can
     # carry into the air by jumping the moment you press shift.
-    sprinting = bool(keys & K_SPRINT) and move_f > 0.0 and was_grounded
+    #
+    # Priority matters: aiming down sights overrides sprint, so holding shift while
+    # scoped does not quietly give you rifle mobility with sniper accuracy.
+    ads = bool(keys & K_ADS)
+    sprinting = bool(keys & K_SPRINT) and move_f > 0.0 and was_grounded and not ads
     crouching = bool(keys & K_CROUCH)
-    if crouching:
+    if ads:
+        wish_speed = cfg.ads_speed
+    elif crouching:
         wish_speed = cfg.crouch_speed
     elif sprinting:
         wish_speed = cfg.sprint_speed

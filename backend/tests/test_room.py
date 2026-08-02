@@ -397,7 +397,11 @@ def test_welcome_carries_everything_the_client_needs(room):
     assert w["playerId"] == ent.eid
     assert w["team"] in ("A", "B")
     assert w["config"]["tickHz"] == room.settings.tick_hz
-    assert {x["id"] for x in w["weapons"]} == {"rifle", "pistol", "knife"}
+    # The full table, not just this player's loadout: the client has to render everyone.
+    assert {x["id"] for x in w["weapons"]} == {
+        "rifle", "smg", "sniper", "shotgun", "pistol", "knife",
+    }
+    assert w["primary"] in ("rifle", "smg", "sniper", "shotgun")
     assert w["map"]["boxes"], "the client builds its scene from this"
 
 

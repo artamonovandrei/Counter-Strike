@@ -12,8 +12,10 @@ import math
 from collections import deque
 from typing import Deque, List, Optional, Tuple
 
-from ..config import MOVE
-from ..protocol import F_BOT, F_DEAD, F_GROUNDED, F_MOVING, F_RELOADING, F_SPRINTING
+from ..config import DEFAULT_PRIMARY, MOVE
+from ..protocol import (
+    F_ADS, F_AIRBORNE, F_BOT, F_DEAD, F_GROUNDED, F_MOVING, F_RELOADING, F_SPRINTING,
+)
 from .mathx import AABB, Vec3, angles_to_dir
 from .weapons import Arsenal
 
@@ -41,17 +43,26 @@ class Entity:
         "health", "armor", "alive", "grounded",
         "kills", "deaths", "damage_dealt", "score",
         "respawn_at", "spawn_protect_until", "last_hurt_by", "last_hurt_at",
-        "arsenal", "history",
+        "arsenal", "history", "primary",
         "last_input_seq", "input_queue", "pending_weapon", "prev_keys",
         "ping_ms", "last_seen", "chat_times", "brain", "connected",
     )
 
-    def __init__(self, eid: int, name: str, team: str, is_bot: bool = False, sid: str = ""):
+    def __init__(
+        self,
+        eid: int,
+        name: str,
+        team: str,
+        is_bot: bool = False,
+        sid: str = "",
+        primary: str = DEFAULT_PRIMARY,
+    ):
         self.eid = eid
         self.name = name
         self.team = team
         self.is_bot = is_bot
         self.sid = sid
+        self.primary = primary
         self.connected = True
 
         self.pos = Vec3()
@@ -74,7 +85,7 @@ class Entity:
         self.last_hurt_by: Optional[int] = None
         self.last_hurt_at = 0.0
 
-        self.arsenal = Arsenal()
+        self.arsenal = Arsenal(primary)
         self.history: Deque[HistoryFrame] = deque(maxlen=HISTORY_LEN)
 
         self.last_input_seq = 0
@@ -167,7 +178,7 @@ class Entity:
         self.respawn_at = 0.0
         self.spawn_protect_until = now + protect
         self.last_hurt_by = None
-        self.arsenal.reset(now)
+        self.arsenal.reset(now, self.primary)
         self.history.clear()
         self.record_history(now)
 
@@ -205,6 +216,8 @@ class Entity:
             f |= F_DEAD
         if self.grounded:
             f |= F_GROUNDED
+        else:
+            f |= F_AIRBORNE
         if self.arsenal.reload_end_at:
             f |= F_RELOADING
         speed_sq = self.vel.x * self.vel.x + self.vel.z * self.vel.z
@@ -214,6 +227,10 @@ class Entity:
             f |= F_SPRINTING
         if self.is_bot:
             f |= F_BOT
+        # Half-raised counts as aiming: the remote animation should start early rather
+        # than pop at the end of the transition.
+        if self.arsenal.ads_progress > 0.4:
+            f |= F_ADS
         return f
 
     def horizontal_speed(self) -> float:
@@ -251,6 +268,11 @@ class Entity:
             "f": self.flags(),
             "rt": round(max(0.0, self.respawn_at - now), 2) if not self.alive else 0.0,
             "pg": int(self.ping_ms),
+            "ap": round(self.arsenal.ads_progress, 2),
+            "sl": [
+                {"id": wid, "ammo": st.ammo, "reserve": st.reserve}
+                for wid, st in self.arsenal.slots.items()
+            ],
         }
 
     def to_score_row(self) -> dict:

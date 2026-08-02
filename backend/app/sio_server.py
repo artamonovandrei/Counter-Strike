@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 
 import socketio
 
-from .config import Settings, get_settings
+from .config import PRIMARY_WEAPONS, Settings, get_settings
 from .game.manager import RoomManager
 from .protocol import (
     NS_GAME, NS_LOBBY, PROTOCOL_VERSION, parse_input, parse_input_batch,
@@ -105,6 +105,7 @@ class GameServer:
 
             name = sanitize_name(data.get("name"))
             team = data.get("team") if data.get("team") in ("A", "B") else None
+            primary = data.get("primary") if data.get("primary") in PRIMARY_WEAPONS else None
 
             room = self.manager.find_room()
             if room is None:
@@ -112,7 +113,7 @@ class GameServer:
                 await sio.emit("match_found", payload, to=sid, namespace=NS_LOBBY)
                 return payload
 
-            ticket = self.manager.issue_ticket(room, name, team)
+            ticket = self.manager.issue_ticket(room, name, team, primary)
             payload = {
                 "ok": True,
                 "ticket": ticket,
@@ -162,7 +163,7 @@ class GameServer:
                 )
                 return
 
-            ent = room.add_player(sid, ticket.name, ticket.team)
+            ent = room.add_player(sid, ticket.name, ticket.team, ticket.primary)
             await sio.save_session(sid, {"room": room.id, "eid": ent.eid}, namespace=NS_GAME)
             await sio.enter_room(sid, room.id, namespace=NS_GAME)
             await sio.emit("welcome", room.welcome_payload(ent), to=sid, namespace=NS_GAME)

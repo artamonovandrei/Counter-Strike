@@ -1,5 +1,5 @@
 # path: backend/app/game/weapons.py
-"""Per-entity weapon state: ammo, reload, fire timing, spread and recoil accumulation.
+"""Per-entity weapon state: ammo, reload, fire timing, spread, recoil and ADS.
 
 All timing is against the room clock (seconds since room start) rather than wall clock,
 so a paused/lagging room stays internally consistent and tests can drive time by hand.
@@ -14,12 +14,12 @@ from typing import Dict, List, Optional, Tuple
 from ..config import (
     BURST_RESET_TIME,
     DEG,
-    DEFAULT_LOADOUT,
-    RIFLE_PATTERN,
-    RIFLE_YAW_PATTERN,
-    SLOT_TO_WEAPON,
+    MELEE_WEAPON,
+    PATTERNS,
+    SECONDARY_WEAPON,
     WEAPONS,
     WeaponDef,
+    make_loadout,
 )
 
 
@@ -39,18 +39,26 @@ class WeaponSlotState:
 
 
 class Arsenal:
-    """Everything an entity carries, plus the timers that gate firing."""
+    """Everything an entity carries, plus the timers that gate firing.
+
+    Slots are by *category*, not by weapon: slot 1 is whatever primary you picked, slot 2
+    is the pistol, slot 3 the knife. That keeps the number keys meaning the same thing for
+    every player regardless of loadout.
+    """
 
     __slots__ = (
-        "slots", "current", "next_fire_at", "reload_end_at", "switch_end_at",
-        "burst_count", "last_shot_at", "spread_extra", "trigger_held", "dropped",
+        "slots", "order", "current", "primary", "next_fire_at", "reload_end_at",
+        "switch_end_at", "burst_count", "last_shot_at", "spread_extra", "trigger_held",
+        "dropped", "ads", "ads_progress",
     )
 
-    def __init__(self, loadout: Optional[List[str]] = None):
+    def __init__(self, primary: Optional[str] = None):
+        self.primary = primary
         self.slots: Dict[str, WeaponSlotState] = {}
-        for wid in (loadout or DEFAULT_LOADOUT):
-            self.slots[wid] = WeaponSlotState(wid)
-        self.current: str = (loadout or DEFAULT_LOADOUT)[0]
+        self.order: List[str] = []
+        self.ads = False
+        self.ads_progress = 0.0  # 0 = hip, 1 = fully sighted
+        self._install(make_loadout(primary))
         self.next_fire_at: float = 0.0
         self.reload_end_at: float = 0.0
         self.switch_end_at: float = 0.0
@@ -59,6 +67,11 @@ class Arsenal:
         self.spread_extra: float = 0.0  # degrees, decays over time
         self.trigger_held: bool = False
         self.dropped: List[str] = []
+
+    def _install(self, loadout: List[str]) -> None:
+        self.order = list(loadout)
+        self.slots = {wid: WeaponSlotState(wid) for wid in loadout}
+        self.current = loadout[0]
 
     # ── introspection ─────────────────────────────────────────────────────────
 
@@ -84,13 +97,16 @@ class Arsenal:
         st = self.slots.get(self.current)
         return st.reserve if st else 0
 
+    def can_ads(self) -> bool:
+        return self.definition.ads_fov > 0.0
+
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
-    def reset(self, now: float, loadout: Optional[List[str]] = None) -> None:
+    def reset(self, now: float, primary: Optional[str] = None) -> None:
         """Full refill on spawn, including re-granting anything that was dropped."""
-        wanted = loadout or DEFAULT_LOADOUT
-        self.slots = {wid: WeaponSlotState(wid) for wid in wanted}
-        self.current = wanted[0]
+        if primary is not None:
+            self.primary = primary
+        self._install(make_loadout(self.primary))
         self.next_fire_at = now
         self.reload_end_at = 0.0
         self.switch_end_at = now
@@ -99,6 +115,8 @@ class Arsenal:
         self.spread_extra = 0.0
         self.trigger_held = False
         self.dropped = []
+        self.ads = False
+        self.ads_progress = 0.0
 
     def update(self, now: float, dt: float) -> Optional[str]:
         """Advance timers. Returns an event name when something completed this tick."""
@@ -107,6 +125,18 @@ class Arsenal:
             self.spread_extra -= self.definition.spread_decay * dt
             if self.spread_extra < 0.0:
                 self.spread_extra = 0.0
+
+        # Sights raise and lower over ads_time rather than snapping, so quick-scoping has
+        # to actually wait for the sight picture.
+        d = self.definition
+        if d.ads_time > 0.0:
+            step = dt / d.ads_time
+        else:
+            step = 1.0
+        if self.ads and self.can_ads():
+            self.ads_progress = min(1.0, self.ads_progress + step)
+        else:
+            self.ads_progress = max(0.0, self.ads_progress - step)
 
         # Burst/pattern reset once the trigger has been off long enough.
         if self.burst_count and (now - self.last_shot_at) > BURST_RESET_TIME:
@@ -130,11 +160,14 @@ class Arsenal:
 
     # ── actions ───────────────────────────────────────────────────────────────
 
+    def set_ads(self, want: bool) -> None:
+        self.ads = want and self.can_ads()
+
     def select_slot(self, slot: int, now: float) -> bool:
-        wid = SLOT_TO_WEAPON.get(slot)
-        if wid is None or wid not in self.slots or wid == self.current:
-            return False
-        return self.select(wid, now)
+        for wid in self.order:
+            if WEAPONS[wid].slot == slot:
+                return self.select(wid, now)
+        return False
 
     def select(self, wid: str, now: float) -> bool:
         if wid not in self.slots or wid == self.current:
@@ -144,13 +177,15 @@ class Arsenal:
         self.current = wid
         self.burst_count = 0
         self.spread_extra = 0.0
+        self.ads = False
+        self.ads_progress = 0.0
         d = WEAPONS[wid]
         self.switch_end_at = now + d.switch_time
         self.next_fire_at = max(self.next_fire_at, self.switch_end_at)
         return True
 
     def next_available(self, direction: int = 1) -> Optional[str]:
-        order = [w for w in DEFAULT_LOADOUT if w in self.slots]
+        order = [w for w in self.order if w in self.slots]
         if len(order) < 2:
             return None
         i = order.index(self.current)
@@ -158,18 +193,20 @@ class Arsenal:
 
     def drop_current(self, now: float) -> Optional[str]:
         """Drop the held weapon. The knife can't be dropped — you always keep a fallback."""
-        if self.current == "knife" or len(self.slots) <= 1:
+        if self.current == MELEE_WEAPON or len(self.slots) <= 1:
             return None
         dropped = self.current
         del self.slots[dropped]
         self.dropped.append(dropped)
-        fallback = next((w for w in DEFAULT_LOADOUT if w in self.slots), None)
+        fallback = next((w for w in self.order if w in self.slots), None)
         if fallback is None:
             return None
         self.current = fallback
         self.switch_end_at = now + WEAPONS[fallback].switch_time
         self.next_fire_at = max(self.next_fire_at, self.switch_end_at)
         self.reload_end_at = 0.0
+        self.ads = False
+        self.ads_progress = 0.0
         return dropped
 
     def begin_reload(self, now: float) -> bool:
@@ -184,6 +221,8 @@ class Arsenal:
         self.reload_end_at = now + d.reload_time
         self.burst_count = 0
         self.spread_extra = 0.0
+        # Reloading drops you out of the sights; you cannot scope through a reload.
+        self.ads = False
         return True
 
     def can_fire(self, now: float, trigger_down: bool) -> bool:
@@ -220,7 +259,12 @@ class Arsenal:
     # ── ballistics ────────────────────────────────────────────────────────────
 
     def current_spread_deg(self, speed: float, grounded: bool, max_speed: float) -> float:
-        """Cone half-angle in degrees for the next shot."""
+        """Cone half-angle in degrees for the next shot.
+
+        ADS is applied *last* and multiplicatively, scaled by how far the sights have
+        actually come up. That is what makes the sniper unusable from the hip and precise
+        when scoped, from one number rather than two separate code paths.
+        """
         d = self.definition
         if d.melee:
             return 0.0
@@ -229,28 +273,35 @@ class Arsenal:
             spread += d.spread_air
         elif speed > 0.1:
             spread += d.spread_move * min(1.0, speed / max(0.1, max_speed))
-        return min(spread, d.spread_max + d.spread_air + d.spread_move)
+        spread = min(spread, d.spread_max + d.spread_air + d.spread_move)
+
+        if self.ads_progress > 0.0:
+            mult = 1.0 + (d.ads_spread_mult - 1.0) * self.ads_progress
+            spread *= mult
+        return spread
 
     def recoil_kick(self) -> Tuple[float, float]:
         """View kick (yaw, pitch) in radians for the shot just fired.
 
-        The rifle follows a fixed pattern so it is learnable; the pistol just kicks up.
-        The kick is sent to the client, which applies it to the camera — meaning the
-        player has to physically pull down to control a spray.
+        Automatic weapons follow a fixed pattern so they are learnable; everything else
+        just kicks up. The kick is sent to the client, which applies it to the camera —
+        meaning the player has to physically pull back to control a spray.
         """
         d = self.definition
         if d.recoil_pitch <= 0.0:
             return 0.0, 0.0
         idx = max(0, self.burst_count - 1)
-        if d.id == "rifle":
-            p = RIFLE_PATTERN[min(idx, len(RIFLE_PATTERN) - 1)]
-            y = RIFLE_YAW_PATTERN[min(idx, len(RIFLE_YAW_PATTERN) - 1)]
+        pattern = PATTERNS.get(d.id)
+        if pattern is not None:
+            pitch_pat, yaw_pat = pattern
+            p = pitch_pat[min(idx, len(pitch_pat) - 1)]
+            y = yaw_pat[min(idx, len(yaw_pat) - 1)]
         else:
             p = min(1.0, 0.5 + idx * 0.2)
             y = 0.0
-        pitch = d.recoil_pitch * p * DEG
-        yaw = d.recoil_yaw * y * DEG
-        return yaw, pitch
+        # Sights steady the weapon a little, as they should.
+        steady = 1.0 - 0.25 * self.ads_progress
+        return d.recoil_yaw * y * DEG * steady, d.recoil_pitch * p * DEG * steady
 
     def apply_spread(
         self, yaw: float, pitch: float, spread_deg: float, rng: random.Random
@@ -265,6 +316,23 @@ class Arsenal:
         r = math.sqrt(rng.random()) * spread_deg * DEG
         theta = rng.random() * math.tau
         return yaw + math.cos(theta) * r, pitch + math.sin(theta) * r
+
+    def pellet_directions(
+        self, yaw: float, pitch: float, spread_deg: float, rng: random.Random
+    ) -> List[Tuple[float, float]]:
+        """Angles for every projectile in one trigger pull.
+
+        Single-projectile weapons get one sample from the cone. Shotguns get ``pellets``
+        samples, with the first one biased toward the centre so aiming still rewards you
+        at the edge of the weapon's range.
+        """
+        d = self.definition
+        if d.pellets <= 1:
+            return [self.apply_spread(yaw, pitch, spread_deg, rng)]
+        out = [self.apply_spread(yaw, pitch, spread_deg * 0.25, rng)]
+        for _ in range(d.pellets - 1):
+            out.append(self.apply_spread(yaw, pitch, spread_deg, rng))
+        return out
 
 
 def damage_at_range(d: WeaponDef, distance: float) -> float:

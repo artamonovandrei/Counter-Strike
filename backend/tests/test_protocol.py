@@ -68,6 +68,13 @@ def test_unknown_key_bits_are_masked_off():
     assert c.keys == K_ALL
 
 
+def test_ads_bit_survives_parsing():
+    from app.protocol import K_ADS
+
+    c = parse_input(cmd(k=K_ADS))
+    assert c is not None and c.pressed(K_ADS)
+
+
 def test_pitch_is_clamped_to_straight_up_and_down():
     up = parse_input(cmd(p=99.0))
     down = parse_input(cmd(p=-99.0))
@@ -166,9 +173,10 @@ def test_protocol_version_matches_the_typescript_mirror():
     [
         ("K_FORWARD", 1 << 0), ("K_BACK", 1 << 1), ("K_LEFT", 1 << 2), ("K_RIGHT", 1 << 3),
         ("K_JUMP", 1 << 4), ("K_SPRINT", 1 << 5), ("K_FIRE", 1 << 6), ("K_RELOAD", 1 << 7),
-        ("K_CROUCH", 1 << 8),
+        ("K_CROUCH", 1 << 8), ("K_ADS", 1 << 9),
         ("F_DEAD", 1 << 0), ("F_GROUNDED", 1 << 1), ("F_RELOADING", 1 << 2),
         ("F_SPRINTING", 1 << 3), ("F_MOVING", 1 << 4), ("F_BOT", 1 << 5),
+        ("F_ADS", 1 << 6), ("F_AIRBORNE", 1 << 7),
     ],
 )
 def test_bit_constants_match_the_typescript_mirror(name, value):

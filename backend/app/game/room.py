@@ -16,11 +16,11 @@ import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..config import (
-    BOT_NAMES, BOT_TUNING, DEG, MOVE, SLOT_TO_WEAPON, Settings, WEAPONS, client_config,
-    client_weapons,
+    BOT_NAMES, BOT_PRIMARY_WEIGHTS, BOT_TUNING, DEFAULT_PRIMARY, DEG, MOVE,
+    PRIMARY_WEAPONS, Settings, WEAPONS, client_config, client_weapons,
 )
 from ..protocol import (
-    F_DEAD, InputCmd, K_FIRE, K_RELOAD, PROTOCOL_VERSION, TEAMS, other_team,
+    F_DEAD, InputCmd, K_ADS, K_FIRE, K_RELOAD, PROTOCOL_VERSION, TEAMS, other_team,
 )
 from .bots import BotBrain, BotManager
 from .combat import melee_targets, resolve_shot, rewind_seconds
@@ -193,9 +193,13 @@ class Room:
         self._next_eid += 1
         return eid
 
-    def add_player(self, sid: str, name: str, team: Optional[str] = None) -> Entity:
+    def add_player(
+        self, sid: str, name: str, team: Optional[str] = None, primary: Optional[str] = None
+    ) -> Entity:
         chosen = self.pick_team(team)
-        ent = Entity(self._alloc_eid(), name, chosen, is_bot=False, sid=sid)
+        if primary not in PRIMARY_WEAPONS:
+            primary = DEFAULT_PRIMARY
+        ent = Entity(self._alloc_eid(), name, chosen, is_bot=False, sid=sid, primary=primary)
         ent.last_seen = self.time
         self.entities[ent.eid] = ent
         self.by_sid[sid] = ent
@@ -220,9 +224,24 @@ class Room:
         log.info("room %s: %s left (%d humans)", self.id, ent.name, self.human_count())
         return ent
 
+    def _pick_bot_primary(self) -> str:
+        """Weighted pick so a team doesn't end up as four snipers holding the same angle."""
+        weights = [BOT_PRIMARY_WEIGHTS.get(w, 0.0) for w in PRIMARY_WEAPONS]
+        total = sum(weights)
+        if total <= 0.0:
+            return DEFAULT_PRIMARY
+        roll = self.rng.random() * total
+        for wid, weight in zip(PRIMARY_WEAPONS, weights):
+            roll -= weight
+            if roll <= 0.0:
+                return wid
+        return DEFAULT_PRIMARY
+
     def add_bot(self, team: str) -> Entity:
         name = self._bot_name()
-        ent = Entity(self._alloc_eid(), name, team, is_bot=True)
+        ent = Entity(
+            self._alloc_eid(), name, team, is_bot=True, primary=self._pick_bot_primary()
+        )
         self.entities[ent.eid] = ent
         self.bots.attach(ent)
         self.respawn(ent, immediate=True)
@@ -373,6 +392,9 @@ class Room:
             if ars.select_slot(cmd.weapon, now):
                 self.push_broadcast({"e": "switch", "id": ent.eid, "w": ars.current})
 
+        # Set the ADS intent before advancing timers, so this tick's spread already
+        # reflects the button the player is holding right now.
+        ars.set_ads(bool(keys & K_ADS))
         done = ars.update(now, dt)
         if done == "reload_done" and not ent.is_bot:
             pass  # ammo counts ride along in the snapshot; no separate event needed
@@ -425,8 +447,6 @@ class Room:
             return
 
         spread = ars.current_spread_deg(ent.horizontal_speed(), ent.grounded, MOVE.sprint_speed)
-        yaw, pitch = ars.apply_spread(ent.yaw, ent.pitch, spread, self.rng)
-        direction = angles_to_dir(yaw, pitch)
         origin = ent.eye_pos()
 
         rewind = 0.0
@@ -435,21 +455,52 @@ class Room:
                 ent.ping_ms, self.settings.interp_delay_ms, self.settings.lagcomp_max_ms
             )
 
-        result = resolve_shot(
-            self.world, ent, list(self.entities.values()), weapon, origin, direction,
-            now, rewind=rewind,
-        )
+        others = list(self.entities.values())
+        directions = ars.pellet_directions(ent.yaw, ent.pitch, spread, self.rng)
+
+        # One trigger pull, possibly many projectiles. Damage is accumulated per victim so
+        # a shotgun blast produces a single hitmarker worth nine pellets rather than nine
+        # separate ones — the feedback should describe the shot, not the simulation.
+        totals: Dict[int, List] = {}
+        tracers: List[dict] = []
+        for yaw, pitch in directions:
+            direction = angles_to_dir(yaw, pitch)
+            result = resolve_shot(
+                self.world, ent, others, weapon, origin, direction, now, rewind=rewind,
+            )
+            tracers.append({"o": origin.rounded(), "p": result.end.rounded()})
+
+            if result.victim is not None:
+                acc = totals.get(result.victim.eid)
+                if acc is None:
+                    totals[result.victim.eid] = [result.victim, result.damage, result.headshot]
+                else:
+                    acc[1] += result.damage
+                    acc[2] = acc[2] or result.headshot
+            elif result.impact_normal is not None:
+                self.push_broadcast(
+                    {
+                        "e": "impact", "p": result.end.rounded(),
+                        "n": result.impact_normal.rounded(), "m": result.impact_material,
+                    }
+                )
 
         ars.consume_shot(now)
         if ent.is_bot and isinstance(ent.brain, BotBrain):
             ent.brain.note_shot_fired(now)
 
+        # `shot` drives the muzzle flash and the report; `tracer` draws the projectiles.
+        # Splitting them keeps one sound per trigger pull no matter the pellet count.
         self.push_broadcast(
             {
                 "e": "shot", "id": ent.eid, "w": weapon.id,
-                "o": origin.rounded(), "d": direction.rounded(),
+                "o": origin.rounded(), "d": angles_to_dir(ent.yaw, ent.pitch).rounded(),
             }
         )
+        for t in tracers:
+            t["id"] = ent.eid
+            t["e"] = "tracer"
+            self.push_broadcast(t)
 
         # Recoil is a view kick the client applies to its own camera; the server sends it
         # rather than modifying the shot, so what the player aims at is what gets traced.
@@ -457,17 +508,8 @@ class Room:
             kick_yaw, kick_pitch = ars.recoil_kick()
             self.push_private(ent.sid, {"e": "kick", "y": round(kick_yaw, 5), "p": round(kick_pitch, 5)})
 
-        if result.victim is not None:
-            self.damage_entity(
-                result.victim, ent, result.damage, weapon.armor_pen, weapon.id, result.headshot
-            )
-        elif result.impact_normal is not None:
-            self.push_broadcast(
-                {
-                    "e": "impact", "p": result.end.rounded(),
-                    "n": result.impact_normal.rounded(), "m": result.impact_material,
-                }
-            )
+        for victim, damage, headshot in totals.values():
+            self.damage_entity(victim, ent, damage, weapon.armor_pen, weapon.id, headshot)
 
     def damage_entity(
         self, victim: Entity, attacker: Optional[Entity], amount: int,
@@ -486,7 +528,12 @@ class Room:
             if attacker.sid:
                 self.push_private(
                     attacker.sid,
-                    {"e": "hit", "dmg": dealt, "hs": headshot, "kill": killed},
+                    {
+                        "e": "hit", "dmg": dealt, "hs": headshot, "kill": killed,
+                        # The victim id lets the shooter's client put blood on the right
+                        # body instead of guessing from the crosshair.
+                        "vid": victim.eid,
+                    },
                 )
         if victim.sid:
             src = attacker.pos.rounded() if attacker else victim.pos.rounded()
@@ -683,6 +730,7 @@ class Room:
             "roomId": self.id,
             "team": ent.team,
             "name": ent.name,
+            "primary": ent.primary,
             "config": client_config(self.settings),
             "weapons": client_weapons(),
             "map": self.world.data,

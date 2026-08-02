@@ -22,7 +22,7 @@ from ..config import get_settings
 from ..game.mathx import Vec3
 from ..game.movement import step_movement
 from ..game.world import load_world
-from ..protocol import K_BACK, K_FORWARD, K_JUMP, K_LEFT, K_RIGHT, K_SPRINT
+from ..protocol import K_ADS, K_BACK, K_FORWARD, K_JUMP, K_LEFT, K_RIGHT, K_SPRINT
 
 DT = 1.0 / 60.0
 
@@ -38,6 +38,10 @@ SCENARIOS = [
     {"name": "fall_from_height", "start": [0.0, 8.0, 0.0], "yaw": 0.0, "keys": 0, "ticks": 120},
     {"name": "air_control", "start": [-19.0, 6.0, 0.0], "yaw": 1.2, "keys": K_FORWARD | K_RIGHT, "ticks": 120},
     {"name": "corner_slide", "start": [8.6, 0.5, -8.0], "yaw": 0.6, "keys": K_FORWARD, "ticks": 160},
+    # ADS changes the movement speed, so it has to be covered here or a divergence in the
+    # slow-walk would only show up as rubber-banding while scoped.
+    {"name": "ads_walk", "start": [0.0, 0.5, -20.0], "yaw": 0.0, "keys": K_FORWARD | K_ADS, "ticks": 120},
+    {"name": "ads_beats_sprint", "start": [0.0, 0.5, -20.0], "yaw": 0.3, "keys": K_FORWARD | K_SPRINT | K_ADS, "ticks": 120},
 ]
 
 

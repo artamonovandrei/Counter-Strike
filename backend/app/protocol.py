@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-PROTOCOL_VERSION = "1.0.0"
+PROTOCOL_VERSION = "1.1.0"
 
 NS_LOBBY = "/lobby"
 NS_GAME = "/game"
@@ -30,9 +30,11 @@ K_SPRINT = 1 << 5
 K_FIRE = 1 << 6
 K_RELOAD = 1 << 7
 K_CROUCH = 1 << 8
+K_ADS = 1 << 9
 
 K_ALL = (
-    K_FORWARD | K_BACK | K_LEFT | K_RIGHT | K_JUMP | K_SPRINT | K_FIRE | K_RELOAD | K_CROUCH
+    K_FORWARD | K_BACK | K_LEFT | K_RIGHT | K_JUMP | K_SPRINT | K_FIRE | K_RELOAD
+    | K_CROUCH | K_ADS
 )
 
 # ─── Entity state flags (server → client) ─────────────────────────────────────
@@ -42,6 +44,8 @@ F_RELOADING = 1 << 2
 F_SPRINTING = 1 << 3
 F_MOVING = 1 << 4
 F_BOT = 1 << 5
+F_ADS = 1 << 6
+F_AIRBORNE = 1 << 7
 
 Team = Literal["A", "B"]
 Phase = Literal["warmup", "live", "intermission"]
@@ -83,6 +87,7 @@ class FindMatchRequest(BaseModel):
     protocol: str = ""
     name: str = "Recruit"
     team: Optional[Literal["A", "B"]] = None
+    primary: Optional[str] = None
 
 
 class JoinRequest(BaseModel):

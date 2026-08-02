@@ -31,6 +31,7 @@ class Ticket:
     room_id: str
     name: str
     team: Optional[str]
+    primary: Optional[str]
     issued_at: float
 
 
@@ -74,15 +75,18 @@ class RoomManager:
 
     # ── tickets ───────────────────────────────────────────────────────────────
 
-    def issue_ticket(self, room: Room, name: str, team: Optional[str]) -> str:
+    def issue_ticket(
+        self, room: Room, name: str, team: Optional[str], primary: Optional[str] = None
+    ) -> str:
         """One-shot credential handing a lobby client over to the game namespace.
 
-        It exists so the /game namespace never has to trust a client-supplied room id or
-        name, and so a stale reconnect can't silently rejoin a room it was kicked from.
+        It exists so the /game namespace never has to trust a client-supplied room id,
+        name or loadout, and so a stale reconnect can't silently rejoin a room it was
+        kicked from.
         """
         self._expire_tickets()
         token = secrets.token_urlsafe(16)
-        self.tickets[token] = Ticket(room.id, name, team, time.monotonic())
+        self.tickets[token] = Ticket(room.id, name, team, primary, time.monotonic())
         return token
 
     def redeem_ticket(self, token: str) -> Optional[Ticket]:
