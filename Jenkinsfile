@@ -187,7 +187,7 @@ from email.utils import formataddr, formatdate, make_msgid
 user = os.environ['SMTP_USER']
 password = os.environ['SMTP_PASS']
 from_addr = 'artamonovandrei88@gmail.com'
-to_addr = os.environ.get('SES_TO', 'artamonovandrei88@gmail.com')
+to_addr = os.environ.get('SES_TO', 'a.artamonov@wp.pl')
 subject = '''${mailSubject}'''
 body = '''${mailBody}'''
 
