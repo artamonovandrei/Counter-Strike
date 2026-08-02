@@ -97,18 +97,29 @@ pipeline {
                 withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
                     sh '''
                         set -e
+                        REPO_URL="https://${GIT_USER}:${GIT_PASS}@github.com/artamonovandrei/Counter-Strike.git"
+                        WORK="$(mktemp -d /tmp/webstrike-promote.XXXXXX)"
+                        cleanup() { rm -rf "$WORK"; }
+                        trap cleanup EXIT
+
+                        git clone --depth 50 --no-single-branch "$REPO_URL" "$WORK"
+                        cd "$WORK"
                         git config user.name "artamonovandrei"
                         git config user.email "artamonovandrei88@gmail.com"
+
                         git fetch origin main develop
                         git checkout -B main origin/main
-                        if git merge-base --is-ancestor origin/develop HEAD; then
+                        git merge --ff-only origin/develop || \
+                          git merge --no-ff origin/develop -m "Auto-merge develop → main (CI #${BUILD_NUMBER} OK)"
+
+                        BEFORE=$(git rev-parse origin/main)
+                        AFTER=$(git rev-parse HEAD)
+                        if [ "$BEFORE" = "$AFTER" ]; then
                           echo "AUTO_MERGE_SKIP develop already in main"
                         else
-                          git merge --no-ff origin/develop -m "Auto-merge develop → main (CI #${BUILD_NUMBER} OK)"
-                          git push "https://${GIT_USER}:${GIT_PASS}@github.com/artamonovandrei/Counter-Strike.git" HEAD:main
+                          git push origin HEAD:main
                           echo "AUTO_MERGE_OK"
                         fi
-                        git checkout -B develop origin/develop
                     '''
                 }
             }
