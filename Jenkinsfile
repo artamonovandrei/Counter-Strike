@@ -86,6 +86,60 @@ pipeline {
             }
         }
 
+        // Po zielonym CI na develop → merge do main (main odpali deploy).
+        // Credential: github-token = Secret text (PAT z uprawnieniem repo) ALBO Username/Password (user + PAT).
+        stage('Promote develop to main') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    def merged = false
+                    try {
+                        withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                            sh '''
+                                set -e
+                                git config user.name "artamonovandrei"
+                                git config user.email "artamonovandrei88@gmail.com"
+                                git fetch origin main develop
+                                git checkout -B main origin/main
+                                if git merge-base --is-ancestor origin/develop HEAD; then
+                                  echo "AUTO_MERGE_SKIP develop already in main"
+                                else
+                                  git merge --no-ff origin/develop -m "Auto-merge develop → main (CI #${BUILD_NUMBER} OK)"
+                                  git push "https://x-access-token:${GITHUB_TOKEN}@github.com/artamonovandrei/Counter-Strike.git" HEAD:main
+                                  echo "AUTO_MERGE_OK"
+                                fi
+                                git checkout -B develop origin/develop
+                            '''
+                            merged = true
+                        }
+                    } catch (ignored) {
+                        echo "github-token as Secret text unavailable, trying Username/Password..."
+                    }
+                    if (!merged) {
+                        withCredentials([usernamePassword(credentialsId: 'github-token', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
+                            sh '''
+                                set -e
+                                git config user.name "artamonovandrei"
+                                git config user.email "artamonovandrei88@gmail.com"
+                                git fetch origin main develop
+                                git checkout -B main origin/main
+                                if git merge-base --is-ancestor origin/develop HEAD; then
+                                  echo "AUTO_MERGE_SKIP develop already in main"
+                                else
+                                  git merge --no-ff origin/develop -m "Auto-merge develop → main (CI #${BUILD_NUMBER} OK)"
+                                  git push "https://${GIT_USER}:${GIT_PASS}@github.com/artamonovandrei/Counter-Strike.git" HEAD:main
+                                  echo "AUTO_MERGE_OK"
+                                fi
+                                git checkout -B develop origin/develop
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Deploy to k3s') {
             when {
                 anyOf {
