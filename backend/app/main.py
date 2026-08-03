@@ -19,7 +19,7 @@ from typing import Optional
 import socketio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .config import VERSION, get_settings
 from .protocol import PROTOCOL_VERSION
@@ -115,13 +115,41 @@ async def version() -> dict:
 
 
 @api.get("/api/metrics")
-async def metrics() -> dict:
-    """Plain JSON rather than Prometheus text — small enough to read by eye, and easy to
-    scrape with a one-line exporter if you later want it in Prometheus."""
+async def metrics_json() -> dict:
+    """Human-readable JSON snapshot (debug / diploma demos)."""
     m = game.manager.metrics()
     m["uptime"] = round(time.time() - START_TIME, 1)
     m["version"] = VERSION
     return m
+
+
+@api.get("/metrics", response_class=PlainTextResponse)
+async def metrics_prometheus() -> str:
+    """Prometheus exposition format — scraped by Prometheus in the monitoring namespace."""
+    m = game.manager.metrics()
+    uptime = round(time.time() - START_TIME, 1)
+    lines = [
+        "# HELP webstrike_up 1 if the process is serving requests",
+        "# TYPE webstrike_up gauge",
+        "webstrike_up 1",
+        "# HELP webstrike_uptime_seconds Process uptime in seconds",
+        "# TYPE webstrike_uptime_seconds gauge",
+        f"webstrike_uptime_seconds {uptime}",
+        "# HELP webstrike_rooms Active game rooms",
+        "# TYPE webstrike_rooms gauge",
+        f"webstrike_rooms {m.get('rooms', 0)}",
+        "# HELP webstrike_players Connected human players",
+        "# TYPE webstrike_players gauge",
+        f"webstrike_players {m.get('players', 0)}",
+        "# HELP webstrike_bots Active bots",
+        "# TYPE webstrike_bots gauge",
+        f"webstrike_bots {m.get('bots', 0)}",
+        "# HELP webstrike_capacity Max player slots across rooms",
+        "# TYPE webstrike_capacity gauge",
+        f"webstrike_capacity {m.get('capacity', 0)}",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 @api.get("/api/rooms")
