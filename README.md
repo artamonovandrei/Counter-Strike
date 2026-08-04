@@ -118,7 +118,7 @@ not a single binary asset in the repo.
 │   ├── check-parity.py           # client vs server: constants + movement
 │   ├── deploy.sh                 # rebuild + health check + rollback
 │   └── dev.sh
-├── .github/workflows/ci.yml
+├── Jenkinsfile                   # CI/CD (Jenkins only — no GitHub Actions)
 ├── docker-compose.yml
 ├── Makefile
 └── .env.example
