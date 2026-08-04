@@ -52,7 +52,7 @@ pipeline {
                 sh '''
                     set -e
                     cd frontend
-                    npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+                    npm ci --no-audit --no-fund
                     npm run typecheck
                     npm run build
                 '''

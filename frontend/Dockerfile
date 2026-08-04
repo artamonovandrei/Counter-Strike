@@ -11,9 +11,9 @@ WORKDIR /build
 # Install dependencies against the lockfile alone so this layer is cached independently
 # of source changes. `npm ci` fails loudly if package.json and the lockfile disagree,
 # which is what you want in a build.
-COPY frontend/package.json frontend/package-lock.json* ./frontend/
+COPY frontend/package.json frontend/package-lock.json ./frontend/
 WORKDIR /build/frontend
-RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 WORKDIR /build
 COPY shared ./shared

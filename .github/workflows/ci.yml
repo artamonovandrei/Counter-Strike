@@ -53,7 +53,7 @@ jobs:
 
       - name: Install
         working-directory: frontend
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Type-check
         working-directory: frontend
@@ -82,7 +82,7 @@ jobs:
 
       - run: pip install -r backend/requirements.txt
       - working-directory: frontend
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Client/server parity
         run: python scripts/check-parity.py

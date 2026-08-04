@@ -38,6 +38,11 @@
 		reverse_proxy backend:8000
 	}
 
+	# Prometheus scrape (also available in-cluster as backend:8000/metrics)
+	handle /metrics {
+		reverse_proxy backend:8000
+	}
+
 	# ── static client ─────────────────────────────────────────────────────────
 	handle {
 		root * /srv/www
